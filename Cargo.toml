@@ -1,0 +1,10 @@
+[workspace]
+resolver = "2"
+members = ["core", "src-tauri"]
+
+# Keep debug builds lean on memory
+[profile.dev]
+debug = 1
+
+[profile.test]
+debug = 0
