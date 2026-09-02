@@ -162,16 +162,16 @@ impl<'a> Scanner<'a> {
             }
 
             progress.current_file = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
-            match self.process_file(path) {
-                Outcome::Indexed => {
+            match self.index_file(path) {
+                FileOutcome::Indexed(_) => {
                     progress.files_indexed += 1;
                     summary.indexed += 1;
                 }
-                Outcome::Unchanged => {
+                FileOutcome::Unchanged => {
                     progress.files_skipped += 1;
                     summary.skipped_unchanged += 1;
                 }
-                Outcome::Failed => {
+                FileOutcome::Failed => {
                     progress.files_failed += 1;
                     summary.failed += 1;
                 }
@@ -204,9 +204,11 @@ impl<'a> Scanner<'a> {
         Ok(summary)
     }
 
-    /// Index one file. Failures are recorded as problems and reported as
-    /// `Outcome::Failed` — never propagated, so one bad file can't stop a scan.
-    fn process_file(&self, path: &Path) -> Outcome {
+    /// Index one file. Public so the file watcher can index single files as
+    /// they appear. Failures are recorded as problems and reported as
+    /// `FileOutcome::Failed` — never propagated, so one bad file can't stop
+    /// a scan.
+    pub fn index_file(&self, path: &Path) -> FileOutcome {
         let path_str = crate::db::normalize_path(path);
 
         // 1. Stat metadata (size + timestamps for the fingerprint).
@@ -218,7 +220,7 @@ impl<'a> Scanner<'a> {
                     "stat_failed",
                     &format!("could not read file metadata: {e}"),
                 );
-                return Outcome::Failed;
+                return FileOutcome::Failed;
             }
         };
         let size = fs_meta.len() as i64;
@@ -234,7 +236,7 @@ impl<'a> Scanner<'a> {
         if let Some(fp) = self.db.fingerprint_by_path(&path_str).unwrap_or(None) {
             if Database::fingerprint_matches(&fp, size, modified_ts) {
                 let _ = self.db.touch_verified(fp.id);
-                return Outcome::Unchanged;
+                return FileOutcome::Unchanged;
             }
         }
 
@@ -247,7 +249,7 @@ impl<'a> Scanner<'a> {
                     "hash_failed",
                     &format!("could not hash file: {e}"),
                 );
-                return Outcome::Failed;
+                return FileOutcome::Failed;
             }
         };
 
@@ -260,7 +262,7 @@ impl<'a> Scanner<'a> {
                     "unreadable",
                     &format!("corrupted or unsupported image: {e}"),
                 );
-                return Outcome::Failed;
+                return FileOutcome::Failed;
             }
         };
 
@@ -290,7 +292,7 @@ impl<'a> Scanner<'a> {
                         "unreadable",
                         &format!("image failed to decode: {e}"),
                     );
-                    return Outcome::Failed;
+                    return FileOutcome::Failed;
                 }
             }
         } else {
@@ -304,12 +306,26 @@ impl<'a> Scanner<'a> {
             );
         }
 
-        // 6. Insert the record. Images are immediately searchable by
-        //    filename/date; OCR full-text arrives later (Sprint 2).
+        // 5b. Hash-based identity: a file whose content matches a previously
+        //     `missing` record is that record moved/restored — re-point it
+        //     instead of creating a duplicate record (OCR stays valid).
         let filename = path
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
+        if let Ok(Some(id)) = self.db.restore_missing_record(
+            &content_hash,
+            &path_str,
+            &filename,
+            size,
+            modified_ts,
+        ) {
+            log::info!("restored missing record {id} at {path_str}");
+            return FileOutcome::Indexed(id);
+        }
+
+        // 6. Insert the record. Images are immediately searchable by
+        //    filename/date; OCR runs in the background pipeline.
         let rec = NewScreenshot {
             path: path_str,
             filename,
@@ -329,9 +345,9 @@ impl<'a> Scanner<'a> {
                 "db_insert_failed",
                 &format!("could not store record: {e}"),
             );
-            return Outcome::Failed;
+            return FileOutcome::Failed;
         }
-        Outcome::Indexed
+        FileOutcome::Indexed(self.db.fingerprint_by_path(&rec.path).unwrap_or(None).map(|f| f.id).unwrap_or(0))
     }
 
     /// Write a thumbnail into the cache from an already-decoded image.
@@ -357,8 +373,10 @@ impl<'a> Scanner<'a> {
     }
 }
 
-enum Outcome {
-    Indexed,
+/// Whether a file was newly indexed, already known-unchanged, or failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileOutcome {
+    Indexed(i64),
     Unchanged,
     Failed,
 }

@@ -10,18 +10,19 @@ mod commands;
 mod logger;
 
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use shotmemory_core::db::Database;
 use shotmemory_core::platform::PlatformPaths;
+use shotmemory_core::watcher::WatchService;
 
 /// Shared application state managed by Tauri.
 pub struct AppState {
     /// Primary DB connection for quick UI queries.
     pub db: Mutex<Database>,
-    /// Path to the DB file; the scan thread opens its own connection so long
-    /// scans never block UI queries (WAL allows concurrent readers/writer).
+    /// Path to the DB file; background threads open their own connections so
+    /// long scans/OCR never block UI queries (WAL allows concurrency).
     pub db_path: PathBuf,
     /// Thumbnail cache directory.
     pub thumb_cache: PathBuf,
@@ -29,6 +30,12 @@ pub struct AppState {
     pub scan_running: AtomicBool,
     /// Cooperative cancellation flag for the running scan (swapped per scan).
     pub scan_cancel: Mutex<Arc<AtomicBool>>,
+    /// Live directory monitor (Sprint 2).
+    pub watcher: Mutex<Option<WatchService>>,
+    /// Whether an OCR run is currently active.
+    pub ocr_running: AtomicBool,
+    /// Cooperative cancellation for the OCR pipeline (swapped per run).
+    pub ocr_cancel: Mutex<Arc<AtomicBool>>,
 }
 
 fn main() {
@@ -45,6 +52,20 @@ fn main() {
             thumb_cache: paths.thumbnail_cache_dir.clone(),
             scan_running: AtomicBool::new(false),
             scan_cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
+            watcher: Mutex::new(None),
+            ocr_running: AtomicBool::new(false),
+            ocr_cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
+        })
+        .setup(|app| {
+            // Start live directory monitoring so new screenshots index
+            // themselves without any user action.
+            let state = app.state::<AppState>();
+            let service = WatchService::spawn(state.db_path.clone(), state.thumb_cache.clone());
+            *state.watcher.lock().map_err(|e| e.to_string())? = Some(service);
+
+            // Resume any OCR work left over from a previous session.
+            let _ = commands::spawn_ocr_if_enabled(app.handle().clone());
+            Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_app_state,
@@ -55,9 +76,16 @@ fn main() {
             commands::pick_folder,
             commands::start_scan,
             commands::cancel_scan,
+            commands::start_ocr,
+            commands::cancel_ocr,
+            commands::retry_ocr,
             commands::get_stats,
             commands::list_screenshots,
             commands::get_thumbnail_path,
+            commands::search,
+            commands::get_screenshot,
+            commands::get_setting,
+            commands::set_setting,
         ])
         .run(tauri::generate_context!())
         .expect("error while running screenshot-memory");

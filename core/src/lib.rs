@@ -21,8 +21,11 @@ pub mod db;
 pub mod error;
 pub mod hashing;
 pub mod metadata;
+pub mod ocr;
 pub mod platform;
 pub mod scanner;
+pub mod search;
 pub mod thumbnails;
+pub mod watcher;
 
 pub use error::{CoreError, CoreResult};

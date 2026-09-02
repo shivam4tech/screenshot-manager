@@ -167,6 +167,10 @@ const MIGRATIONS: &[&str] = &[
         WHERE screenshot_id = new.id;
     END;
     "#,
+    // v3 — OCR pipeline bookkeeping
+    r#"
+    ALTER TABLE screenshots ADD COLUMN ocr_attempts INTEGER NOT NULL DEFAULT 0;
+    "#,
 ];
 
 /// A configured source directory.
@@ -212,6 +216,10 @@ pub struct LibraryStats {
     pub pending: i64,
     pub with_ocr: i64,
     pub ocr_failed: i64,
+    /// OCR queued or not yet attempted.
+    pub ocr_pending: i64,
+    /// OCR currently being processed by a worker.
+    pub ocr_processing: i64,
     pub problem_count: i64,
     /// Oldest capture timestamp (unix seconds), if any.
     pub oldest_ts: Option<i64>,
@@ -244,6 +252,36 @@ pub struct ScreenshotRow {
     pub content_hash: Option<String>,
     pub phash: Option<String>,
     pub starred: bool,
+}
+
+/// Full record for the viewer: grid fields + user metadata + source context
+/// + OCR text + tags. Returned even when the file itself is missing.
+#[derive(Debug, Clone, Serialize)]
+pub struct ScreenshotDetail {
+    pub id: i64,
+    pub path: String,
+    pub filename: String,
+    pub created_ts: Option<i64>,
+    pub modified_ts: Option<i64>,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+    pub format: Option<String>,
+    pub content_hash: Option<String>,
+    pub phash: Option<String>,
+    pub status: String,
+    pub ocr_status: String,
+    pub starred: bool,
+    pub read_later: bool,
+    pub note: String,
+    pub app_name: Option<String>,
+    pub website_domain: Option<String>,
+    pub url: Option<String>,
+    pub window_title: Option<String>,
+    pub category: Option<String>,
+    pub category_confidence: Option<f64>,
+    pub ocr_text: Option<String>,
+    pub ocr_confidence: Option<f32>,
+    pub tags: Vec<String>,
 }
 
 /// Embedded SQLite database handle.
@@ -422,7 +460,7 @@ impl Database {
                  phash = excluded.phash,
                  source_dir_id = excluded.source_dir_id,
                  status = 'available',
-                 ocr_status = 'none',
+                 ocr_status = 'queued',
                  indexed_at = datetime('now')",
             params![
                 rec.path,
@@ -461,6 +499,115 @@ impl Database {
             )?;
         }
         Ok(n)
+    }
+
+    /// Mark a single record missing by exact path (file watcher).
+    pub fn mark_missing_by_path(&self, path: &str) -> CoreResult<usize> {
+        Ok(self.conn.execute(
+            "UPDATE screenshots SET status = 'missing' WHERE path = ?1",
+            params![path],
+        )?)
+    }
+
+    /// Hash-based identity: if a file with this content hash was previously
+    /// marked missing (renamed/moved/restored), re-point that record to its
+    /// new location instead of creating a duplicate record. Existing OCR
+    /// stays valid because the content is byte-identical.
+    pub fn restore_missing_record(
+        &self,
+        content_hash: &str,
+        new_path: &str,
+        new_filename: &str,
+        size: i64,
+        modified_ts: Option<i64>,
+    ) -> CoreResult<Option<i64>> {
+        let id: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT id FROM screenshots
+                 WHERE content_hash = ?1 AND status = 'missing'
+                 ORDER BY id LIMIT 1",
+                params![content_hash],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let Some(id) = id else { return Ok(None) };
+        self.conn.execute(
+            "UPDATE screenshots
+             SET path = ?2, filename = ?3, size = ?4, modified_ts = ?5,
+                 status = 'available', last_verified_at = datetime('now')
+             WHERE id = ?1",
+            params![id, new_path, new_filename, size, modified_ts],
+        )?;
+        Ok(Some(id))
+    }
+
+    /// Full record for the viewer: core row + user/source metadata + OCR text
+    /// + tags. Missing files still resolve (metadata survives deletion).
+    pub fn get_screenshot_detail(&self, id: i64) -> CoreResult<Option<ScreenshotDetail>> {
+        let row = self
+            .conn
+            .query_row(
+                "SELECT id, path, filename, created_ts, modified_ts, width, height,
+                        format, content_hash, phash, status, ocr_status, starred,
+                        read_later, note, app_name, website_domain, url, window_title,
+                        category, category_confidence
+                 FROM screenshots WHERE id = ?1",
+                params![id],
+                |r| {
+                    Ok(ScreenshotDetail {
+                        id: r.get(0)?,
+                        path: r.get(1)?,
+                        filename: r.get(2)?,
+                        created_ts: r.get(3)?,
+                        modified_ts: r.get(4)?,
+                        width: r.get(5)?,
+                        height: r.get(6)?,
+                        format: r.get(7)?,
+                        content_hash: r.get(8)?,
+                        phash: r.get(9)?,
+                        status: r.get(10)?,
+                        ocr_status: r.get(11)?,
+                        starred: r.get::<_, i64>(12)? != 0,
+                        read_later: r.get::<_, i64>(13)? != 0,
+                        note: r.get(14)?,
+                        app_name: r.get(15)?,
+                        website_domain: r.get(16)?,
+                        url: r.get(17)?,
+                        window_title: r.get(18)?,
+                        category: r.get(19)?,
+                        category_confidence: r.get(20)?,
+                        ocr_text: None,
+                        ocr_confidence: None,
+                        tags: Vec::new(),
+                    })
+                },
+            )
+            .optional()?;
+        let Some(mut detail) = row else { return Ok(None) };
+
+        detail.ocr_text = self
+            .conn
+            .query_row(
+                "SELECT text, confidence FROM ocr_text WHERE screenshot_id = ?1",
+                params![id],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<f32>>(1)?)),
+            )
+            .optional()?
+            .map(|(t, c)| {
+                detail.ocr_confidence = c;
+                t
+            });
+
+        let mut stmt = self.conn.prepare(
+            "SELECT t.name FROM tags t
+             JOIN screenshot_tags st ON st.tag_id = t.id
+             WHERE st.screenshot_id = ?1 ORDER BY t.name",
+        )?;
+        detail.tags = stmt
+            .query_map(params![id], |r| r.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Some(detail))
     }
 
     /// Put extracted OCR text into the search index for a screenshot
@@ -521,6 +668,12 @@ impl Database {
         stats.pending = get("SELECT COUNT(*) FROM screenshots WHERE status = 'pending'")?;
         stats.with_ocr = get("SELECT COUNT(*) FROM screenshots WHERE ocr_status = 'done'")?;
         stats.ocr_failed = get("SELECT COUNT(*) FROM screenshots WHERE ocr_status = 'failed'")?;
+        stats.ocr_pending = get(
+            "SELECT COUNT(*) FROM screenshots WHERE ocr_status IN ('none', 'queued')",
+        )?;
+        stats.ocr_processing = get(
+            "SELECT COUNT(*) FROM screenshots WHERE ocr_status = 'processing'",
+        )?;
         stats.problem_count = get("SELECT COUNT(*) FROM problems")?;
         stats.oldest_ts = self
             .conn
@@ -591,6 +744,121 @@ impl Database {
             params![key, value],
         )?;
         Ok(())
+    }
+
+    /// Read-only accessor for higher-level engines (search) built on top of
+    /// the same connection.
+    pub fn conn(&self) -> &Connection {
+        &self.conn
+    }
+
+    // ---- OCR pipeline support -------------------------------------------
+
+    /// Claim the next pending OCR job (atomic even across connections).
+    /// Returns (screenshot_id, path) or None when the queue is empty.
+    pub fn claim_ocr_job(&self, max_attempts: i64) -> CoreResult<Option<(i64, String)>> {
+        let candidate: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT id FROM screenshots
+                 WHERE ocr_status IN ('none', 'queued') AND ocr_attempts < ?1
+                 ORDER BY id LIMIT 1",
+                params![max_attempts],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let Some(id) = candidate else {
+            return Ok(None);
+        };
+        // Atomically transition none/queued -> processing so concurrent
+        // workers never process the same screenshot twice.
+        let claimed = self.conn.execute(
+            "UPDATE screenshots SET ocr_status = 'processing'
+             WHERE id = ?1 AND ocr_status IN ('none', 'queued')",
+            params![id],
+        )?;
+        if claimed == 0 {
+            return Ok(None);
+        }
+        let path: String = self.conn.query_row(
+            "SELECT path FROM screenshots WHERE id = ?1",
+            params![id],
+            |r| r.get(0),
+        )?;
+        Ok(Some((id, path)))
+    }
+
+    /// Persist successful OCR output and make it searchable immediately.
+    pub fn save_ocr_text(
+        &self,
+        screenshot_id: i64,
+        text: &str,
+        confidence: Option<f32>,
+        engine_version: &str,
+    ) -> CoreResult<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "INSERT INTO ocr_text(screenshot_id, text, confidence, engine_version)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(screenshot_id) DO UPDATE SET
+                 text = excluded.text,
+                 confidence = excluded.confidence,
+                 engine_version = excluded.engine_version,
+                 extracted_at = datetime('now')",
+            params![screenshot_id, text, confidence, engine_version],
+        )?;
+        tx.execute(
+            "UPDATE screenshots SET ocr_status = 'done', last_verified_at = datetime('now')
+             WHERE id = ?1",
+            params![screenshot_id],
+        )?;
+        tx.commit()?;
+        // FTS update after commit so the text is searchable right away.
+        self.fts_set_ocr(screenshot_id, text)?;
+        Ok(())
+    }
+
+    /// Record an OCR failure (with attempt count) so it can be retried.
+    pub fn record_ocr_failure(&self, screenshot_id: i64, max_attempts: i64) -> CoreResult<()> {
+        self.conn.execute(
+            "UPDATE screenshots
+             SET ocr_attempts = ocr_attempts + 1,
+                 ocr_status = CASE WHEN ocr_attempts + 1 >= ?2
+                                   THEN 'failed' ELSE 'queued' END
+             WHERE id = ?1",
+            params![screenshot_id, max_attempts],
+        )?;
+        Ok(())
+    }
+
+    /// Re-queue every failed OCR job (user-triggered retry).
+    pub fn retry_failed_ocr(&self) -> CoreResult<usize> {
+        Ok(self.conn.execute(
+            "UPDATE screenshots SET ocr_status = 'queued' WHERE ocr_status = 'failed'",
+            [],
+        )?)
+    }
+
+    /// Enqueue OCR for a single screenshot (used by the file watcher).
+    pub fn queue_ocr(&self, screenshot_id: i64) -> CoreResult<()> {
+        self.conn.execute(
+            "UPDATE screenshots SET ocr_status = 'queued' WHERE id = ?1",
+            params![screenshot_id],
+        )?;
+        Ok(())
+    }
+
+    /// True while the record still refers to an existing, available file.
+    pub fn ocr_candidate(&self, screenshot_id: i64) -> CoreResult<bool> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT 1 FROM screenshots WHERE id = ?1 AND status = 'available'",
+                params![screenshot_id],
+                |r| r.get::<_, i64>(0),
+            )
+            .optional()?
+            .is_some())
     }
 }
 

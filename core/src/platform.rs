@@ -129,6 +129,47 @@ pub fn ensure_dir(path: &Path) -> CoreResult<()> {
     Ok(())
 }
 
+/// Best-effort battery detection for resource-friendly indexing.
+/// Returns false when detection isn't possible on the current platform.
+pub fn on_battery() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        // Any power supply that is discharging means we're on battery.
+        if let Ok(entries) = std::fs::read_dir("/sys/class/power_supply") {
+            for entry in entries.flatten() {
+                let status_file = entry.path().join("status");
+                if let Ok(status) = std::fs::read_to_string(&status_file) {
+                    if status.trim().eq_ignore_ascii_case("discharging") {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(out) = std::process::Command::new("pmset")
+            .args(["-g", "batt"])
+            .output()
+        {
+            let s = String::from_utf8_lossy(&out.stdout);
+            return s.to_lowercase().contains("discharging");
+        }
+        false
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // Best-effort via WMI-less check is not worth a WinAPI dependency
+        // yet; assume AC power (OCR runs) until Settings exposes a toggle.
+        false
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
