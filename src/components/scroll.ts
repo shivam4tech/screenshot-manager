@@ -1,7 +1,10 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 
 /**
  * Infinite scroll: call `loadMore` when the sentinel scrolls into view.
+ *
+ * Uses a callback ref (not a mount-time effect) so the observer attaches
+ * even when the sentinel mounts later — e.g. after the first page loads.
  * Refs avoid stale closures; the sentinel stays mounted so loading more
  * never resets the grid (session state is preserved).
  */
@@ -10,14 +13,12 @@ export function useInfiniteLoader(
   loading: boolean,
   loadMore: () => void
 ) {
-  const sentinel = useRef<HTMLDivElement | null>(null);
   const state = useRef({ hasMore, loading, loadMore });
   state.current = { hasMore, loading, loadMore };
 
+  const observer = useRef<IntersectionObserver | null>(null);
   useEffect(() => {
-    const el = sentinel.current;
-    if (!el) return;
-    const ob = new IntersectionObserver(
+    observer.current = new IntersectionObserver(
       (entries) => {
         const s = state.current;
         if (entries.some((e) => e.isIntersecting) && s.hasMore && !s.loading) {
@@ -26,9 +27,12 @@ export function useInfiniteLoader(
       },
       { rootMargin: "800px" }
     );
-    ob.observe(el);
-    return () => ob.disconnect();
+    const ob = observer.current;
+    return () => ob?.disconnect();
   }, []);
 
+  const sentinel = useCallback((el: HTMLDivElement | null) => {
+    if (el) observer.current?.observe(el);
+  }, []);
   return sentinel;
 }

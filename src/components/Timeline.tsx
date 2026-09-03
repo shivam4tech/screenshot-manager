@@ -164,6 +164,16 @@ export default function Timeline({ onOpenDetail }: { onOpenDetail: (id: number) 
               <div ref={sentinel} className="scroll-sentinel" aria-hidden="true">
                 {loading ? "Loading…" : !hasMore && items.length > 0 ? "End." : ""}
               </div>
+              {date && hasMore && (
+                <div className="load-more">
+                  <button
+                    onClick={() => loadDay(date, items.length)}
+                    disabled={loading}
+                  >
+                    {loading ? "Loading…" : `Load more (${items.length} shown)`}
+                  </button>
+                </div>
+              )}
             </>
           )}
         </>

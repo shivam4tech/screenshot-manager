@@ -283,6 +283,13 @@ export default function Bursts({
                 <div ref={sentinel} className="scroll-sentinel" aria-hidden="true">
                   {loading ? "Loading…" : hasMore ? "" : items.length > 0 ? "End." : ""}
                 </div>
+                {hasMore && (
+                  <div className="load-more">
+                    <button onClick={loadMore} disabled={loading}>
+                      {loading ? "Loading…" : `Load more (${items.length} shown)`}
+                    </button>
+                  </div>
+                )}
                 {culling && <Cull items={items} onDone={afterCull} />}
               </>
             )}

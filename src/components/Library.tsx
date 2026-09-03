@@ -675,6 +675,13 @@ export default function Library({
             <div ref={sentinel} className="scroll-sentinel" aria-hidden="true">
               {!inSearch && loading ? "Loading…" : !gridHasMore && gridRows.length > 0 ? "End." : ""}
             </div>
+            {!inSearch && gridHasMore && (
+              <div className="load-more">
+                <button onClick={loadMoreNext} disabled={loading}>
+                  {loading ? "Loading…" : `Load more (${gridRows.length} shown)`}
+                </button>
+              </div>
+            )}
           </>
         )}
 
