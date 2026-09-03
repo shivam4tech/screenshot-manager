@@ -23,7 +23,12 @@
       "csp": null,
       "assetProtocol": {
         "enable": true,
-        "scope": ["$APPDATA/**"]
+        "scope": [
+          "$APPDATA/**",
+          "$HOME/.local/share/screenshot-memory/**",
+          "$HOME/Library/Application Support/screenshot-memory/**",
+          "$HOME/AppData/Local/screenshot-memory/**"
+        ]
       }
     }
   },
