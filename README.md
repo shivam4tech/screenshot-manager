@@ -6,7 +6,7 @@ A local-first, cross-platform (Windows / Linux / macOS) desktop application that
 turns your existing screenshot collection into a searchable personal visual
 memory — without moving, renaming, or modifying a single file.
 
-## Status — Sprint 2 of 5 (make it findable)
+## Status — Sprint 3 of 5 (get organized)
 
 Working today:
 
@@ -36,9 +36,16 @@ Working today:
   hash, deletions mark records missing without destroying metadata.
 - **Detail overlay** (Sprint 2): full-size view with metadata, source path,
   and extracted OCR text.
+- **Tags** (Sprint 3): manual tagging per screenshot (sidebar with counts,
+  click-to-filter via `tag:name`, free-text matches read the tag index).
+- **Collections** (Sprint 3): named sets with create/rename/delete, add/remove
+  from the detail view or the grid, browsable from the sidebar, searchable via
+  `collection:name`.
+- **Flags & notes** (Sprint 3): star/unstar (sidebar entry + `is:starred` /
+  `is:unstarred` filters), read-later flag, and a searchable free-text note.
 
-Coming in later sprints: timeline, collections & tags management, duplicate
-manager, auto-classification (app/domain/category), system tray, packaging.
+Coming in later sprints: timeline, duplicate manager, auto-classification
+(app/domain/category), system tray, packaging.
 
 ## Architecture
 

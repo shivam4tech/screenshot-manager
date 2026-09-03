@@ -227,6 +227,74 @@ pub struct LibraryStats {
     pub newest_ts: Option<i64>,
 }
 
+/// A tag with its usage count, for the sidebar / filter UI.
+#[derive(Debug, Clone, Serialize)]
+pub struct TagInfo {
+    pub name: String,
+    pub count: i64,
+}
+
+/// A collection with its item count, for the sidebar / manager UI.
+#[derive(Debug, Clone, Serialize)]
+pub struct CollectionInfo {
+    pub id: i64,
+    pub name: String,
+    pub kind: String,
+    pub item_count: i64,
+    pub created_at: String,
+}
+
+/// Map the shared grid-row column list to a `ScreenshotRow`.
+/// Column order must match: id, path, filename, created_ts, width, height,
+/// format, status, ocr_status, content_hash, phash, starred.
+fn map_screenshot_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ScreenshotRow> {
+    Ok(ScreenshotRow {
+        id: r.get(0)?,
+        path: r.get(1)?,
+        filename: r.get(2)?,
+        created_ts: r.get(3)?,
+        width: r.get(4)?,
+        height: r.get(5)?,
+        format: r.get(6)?,
+        status: r.get(7)?,
+        ocr_status: r.get(8)?,
+        content_hash: r.get(9)?,
+        phash: r.get(10)?,
+        starred: r.get::<_, i64>(11)? != 0,
+    })
+}
+
+/// Normalize a user-entered tag name: trimmed, non-empty, capped length.
+/// Returns None for names that carry no meaning (empty/whitespace).
+/// Case is preserved for display; uniqueness is NOCASE at the schema level.
+fn normalize_tag_name(name: &str) -> Option<String> {
+    const MAX_TAG_LEN: usize = 64;
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let mut out = trimmed.to_string();
+    if out.chars().count() > MAX_TAG_LEN {
+        out = out.chars().take(MAX_TAG_LEN).collect();
+    }
+    Some(out)
+}
+
+/// Normalize a user-entered collection name. Same rules as tags but with a
+/// longer cap since collection names appear as sidebar headings.
+fn normalize_collection_name(name: &str) -> Option<String> {
+    const MAX_COLLECTION_LEN: usize = 120;
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let mut out = trimmed.to_string();
+    if out.chars().count() > MAX_COLLECTION_LEN {
+        out = out.chars().take(MAX_COLLECTION_LEN).collect();
+    }
+    Some(out)
+}
+
 /// A recorded per-file problem (corrupted image, unreadable file, ...).
 #[derive(Debug, Clone, Serialize)]
 pub struct Problem {
@@ -706,22 +774,7 @@ impl Database {
              LIMIT ?1 OFFSET ?2",
         )?;
         let rows = stmt
-            .query_map(params![limit, offset], |r| {
-                Ok(ScreenshotRow {
-                    id: r.get(0)?,
-                    path: r.get(1)?,
-                    filename: r.get(2)?,
-                    created_ts: r.get(3)?,
-                    width: r.get(4)?,
-                    height: r.get(5)?,
-                    format: r.get(6)?,
-                    status: r.get(7)?,
-                    ocr_status: r.get(8)?,
-                    content_hash: r.get(9)?,
-                    phash: r.get(10)?,
-                    starred: r.get::<_, i64>(11)? != 0,
-                })
-            })?
+            .query_map(params![limit, offset], map_screenshot_row)?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     }
@@ -890,6 +943,314 @@ impl Database {
             )
             .optional()?
             .is_some())
+    }
+
+    // ---- Organize: tags, flags, notes -------------------------------------
+
+    /// Attach a tag to a screenshot (idempotent). The tag row is created on
+    /// demand; the FTS index is re-synced so `tag:name` search works at once.
+    /// Returns false when the screenshot does not exist.
+    pub fn add_tag(&self, screenshot_id: i64, name: &str) -> CoreResult<bool> {
+        let Some(tag) = normalize_tag_name(name) else {
+            return Err(crate::error::CoreError::other(
+                "tag name must not be empty",
+            ));
+        };
+        if !self.screenshot_exists(screenshot_id)? {
+            return Ok(false);
+        }
+        self.conn.execute(
+            "INSERT INTO tags(name) VALUES (?1)
+             ON CONFLICT(name) DO NOTHING",
+            params![tag],
+        )?;
+        self.conn.execute(
+            "INSERT INTO screenshot_tags(screenshot_id, tag_id, origin)
+             SELECT ?1, id, 'manual' FROM tags WHERE name = ?2
+             ON CONFLICT(screenshot_id, tag_id) DO NOTHING",
+            params![screenshot_id, tag],
+        )?;
+        self.fts_sync_tags(screenshot_id)?;
+        Ok(true)
+    }
+
+    /// Detach a tag from a screenshot. Orphan tag rows are pruned so the
+    /// sidebar never fills with unused names. Returns false when nothing
+    /// was attached.
+    pub fn remove_tag(&self, screenshot_id: i64, name: &str) -> CoreResult<bool> {
+        let Some(tag) = normalize_tag_name(name) else {
+            return Ok(false);
+        };
+        let removed = self.conn.execute(
+            "DELETE FROM screenshot_tags
+             WHERE screenshot_id = ?1
+               AND tag_id IN (SELECT id FROM tags WHERE name = ?2 COLLATE NOCASE)",
+            params![screenshot_id, tag],
+        )?;
+        // Prune tags no screenshot references anymore.
+        self.conn.execute(
+            "DELETE FROM tags
+             WHERE id NOT IN (SELECT tag_id FROM screenshot_tags)",
+            [],
+        )?;
+        if removed > 0 {
+            self.fts_sync_tags(screenshot_id)?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Every tag in use with its screenshot count (for the sidebar).
+    pub fn list_tags(&self) -> CoreResult<Vec<TagInfo>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT t.name, COUNT(st.screenshot_id) AS n
+             FROM tags t
+             JOIN screenshot_tags st ON st.tag_id = t.id
+             GROUP BY t.id
+             ORDER BY n DESC, t.name COLLATE NOCASE",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(TagInfo {
+                    name: r.get(0)?,
+                    count: r.get(1)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Recompute the space-joined tag list in the FTS index for one row.
+    /// Called after every tag mutation; tag renames flow through search via
+    /// the `tag:` filter's direct table lookup, but free-text matches read
+    /// this denormalized column.
+    pub fn fts_sync_tags(&self, screenshot_id: i64) -> CoreResult<()> {
+        let mut stmt = self.conn.prepare(
+            "SELECT t.name FROM tags t
+             JOIN screenshot_tags st ON st.tag_id = t.id
+             WHERE st.screenshot_id = ?1 ORDER BY t.name",
+        )?;
+        let names = stmt
+            .query_map(params![screenshot_id], |r| r.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        self.conn.execute(
+            "UPDATE fts_search SET tags = ?2 WHERE screenshot_id = ?1",
+            params![screenshot_id, names.join(" ")],
+        )?;
+        Ok(())
+    }
+
+    /// Star or unstar a screenshot. Returns false for unknown ids.
+    pub fn set_starred(&self, screenshot_id: i64, starred: bool) -> CoreResult<bool> {
+        Ok(self.conn.execute(
+            "UPDATE screenshots SET starred = ?2 WHERE id = ?1",
+            params![screenshot_id, i64::from(starred)],
+        )? > 0)
+    }
+
+    /// Toggle the read-later flag. Returns false for unknown ids.
+    pub fn set_read_later(&self, screenshot_id: i64, read_later: bool) -> CoreResult<bool> {
+        Ok(self.conn.execute(
+            "UPDATE screenshots SET read_later = ?2 WHERE id = ?1",
+            params![screenshot_id, i64::from(read_later)],
+        )? > 0)
+    }
+
+    /// Replace the free-text note (synced to FTS by the existing trigger).
+    /// Returns false for unknown ids.
+    pub fn set_note(&self, screenshot_id: i64, note: &str) -> CoreResult<bool> {
+        const MAX_NOTE_LEN: usize = 10_000;
+        let mut text = note.trim().to_string();
+        if text.chars().count() > MAX_NOTE_LEN {
+            text = text.chars().take(MAX_NOTE_LEN).collect();
+        }
+        Ok(self.conn.execute(
+            "UPDATE screenshots SET note = ?2 WHERE id = ?1",
+            params![screenshot_id, text],
+        )? > 0)
+    }
+
+    fn screenshot_exists(&self, screenshot_id: i64) -> CoreResult<bool> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT 1 FROM screenshots WHERE id = ?1",
+                params![screenshot_id],
+                |r| r.get::<_, i64>(0),
+            )
+            .optional()?
+            .is_some())
+    }
+
+    // ---- Organize: collections --------------------------------------------
+
+    /// Create a manual collection. Names are unique; creating a duplicate
+    /// returns the existing row (idempotent, like `add_directory`).
+    pub fn create_collection(&self, name: &str) -> CoreResult<CollectionInfo> {
+        let Some(clean) = normalize_collection_name(name) else {
+            return Err(crate::error::CoreError::other(
+                "collection name must not be empty",
+            ));
+        };
+        self.conn.execute(
+            "INSERT INTO collections(name, type) VALUES (?1, 'manual')
+             ON CONFLICT(name) DO NOTHING",
+            params![clean],
+        )?;
+        self.collection_by_name(&clean)?
+            .ok_or_else(|| crate::error::CoreError::other("collection missing"))
+    }
+
+    /// Rename a collection. Returns false for unknown ids; errors on a
+    /// name clash with another collection.
+    pub fn rename_collection(&self, id: i64, name: &str) -> CoreResult<bool> {
+        let Some(clean) = normalize_collection_name(name) else {
+            return Err(crate::error::CoreError::other(
+                "collection name must not be empty",
+            ));
+        };
+        Ok(self.conn.execute(
+            "UPDATE collections SET name = ?2 WHERE id = ?1",
+            params![id, clean],
+        )? > 0)
+    }
+
+    /// Delete a collection (items cascade; screenshots are untouched).
+    pub fn delete_collection(&self, id: i64) -> CoreResult<bool> {
+        Ok(self.conn.execute("DELETE FROM collections WHERE id = ?1", params![id])? > 0)
+    }
+
+    /// Every collection with its item count, newest first.
+    pub fn list_collections(&self) -> CoreResult<Vec<CollectionInfo>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT c.id, c.name, c.type, COUNT(ci.screenshot_id) AS n, c.created_at
+             FROM collections c
+             LEFT JOIN collection_items ci ON ci.collection_id = c.id
+             GROUP BY c.id
+             ORDER BY c.created_at DESC, c.id DESC",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(CollectionInfo {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    kind: r.get(2)?,
+                    item_count: r.get(3)?,
+                    created_at: r.get(4)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    fn collection_by_name(&self, name: &str) -> CoreResult<Option<CollectionInfo>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT c.id, c.name, c.type, COUNT(ci.screenshot_id), c.created_at
+                 FROM collections c
+                 LEFT JOIN collection_items ci ON ci.collection_id = c.id
+                 WHERE c.name = ?1
+                 GROUP BY c.id",
+                params![name],
+                |r| {
+                    Ok(CollectionInfo {
+                        id: r.get(0)?,
+                        name: r.get(1)?,
+                        kind: r.get(2)?,
+                        item_count: r.get(3)?,
+                        created_at: r.get(4)?,
+                    })
+                },
+            )
+            .optional()?)
+    }
+
+    /// Add a screenshot to a collection (idempotent). Returns false when
+    /// either side does not exist.
+    pub fn add_to_collection(&self, collection_id: i64, screenshot_id: i64) -> CoreResult<bool> {
+        if !self.screenshot_exists(screenshot_id)? {
+            return Ok(false);
+        }
+        let collection: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT 1 FROM collections WHERE id = ?1",
+                params![collection_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if collection.is_none() {
+            return Ok(false);
+        }
+        self.conn.execute(
+            "INSERT INTO collection_items(collection_id, screenshot_id)
+             VALUES (?1, ?2)
+             ON CONFLICT(collection_id, screenshot_id) DO NOTHING",
+            params![collection_id, screenshot_id],
+        )?;
+        Ok(true)
+    }
+
+    /// Remove a screenshot from a collection. Returns false when it was
+    /// not a member.
+    pub fn remove_from_collection(
+        &self,
+        collection_id: i64,
+        screenshot_id: i64,
+    ) -> CoreResult<bool> {
+        Ok(self.conn.execute(
+            "DELETE FROM collection_items WHERE collection_id = ?1 AND screenshot_id = ?2",
+            params![collection_id, screenshot_id],
+        )? > 0)
+    }
+
+    /// Paged items of a collection, newest first (same row shape as the grid).
+    pub fn list_collection_items(
+        &self,
+        collection_id: i64,
+        limit: i64,
+        offset: i64,
+    ) -> CoreResult<Vec<ScreenshotRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT s.id, s.path, s.filename, s.created_ts, s.width, s.height, s.format,
+                    s.status, s.ocr_status, s.content_hash, s.phash, s.starred
+             FROM screenshots s
+             JOIN collection_items ci ON ci.screenshot_id = s.id
+             WHERE ci.collection_id = ?1
+             ORDER BY COALESCE(s.created_ts, s.modified_ts) DESC, s.id DESC
+             LIMIT ?2 OFFSET ?3",
+        )?;
+        let rows = stmt
+            .query_map(params![collection_id, limit, offset], map_screenshot_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Collections a screenshot belongs to (for the detail editor).
+    pub fn screenshot_collections(&self, screenshot_id: i64) -> CoreResult<Vec<CollectionInfo>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT c.id, c.name, c.type,
+                    (SELECT COUNT(*) FROM collection_items WHERE collection_id = c.id),
+                    c.created_at
+             FROM collections c
+             JOIN collection_items ci ON ci.collection_id = c.id
+             WHERE ci.screenshot_id = ?1
+             ORDER BY c.name COLLATE NOCASE",
+        )?;
+        let rows = stmt
+            .query_map(params![screenshot_id], |r| {
+                Ok(CollectionInfo {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    kind: r.get(2)?,
+                    item_count: r.get(3)?,
+                    created_at: r.get(4)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 }
 
@@ -1093,6 +1454,124 @@ mod tests {
             "/tmp/b/c.png"
         );
         assert!(normalize_path(Path::new("relative.png")).starts_with('/'));
+    }
+
+    fn organize_fixture() -> (Database, i64) {
+        let db = Database::open_in_memory().unwrap();
+        let id = db
+            .insert_screenshot(&NewScreenshot {
+                path: "/tmp/vacation.png".into(),
+                filename: "vacation.png".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        (db, id)
+    }
+
+    #[test]
+    fn tags_add_remove_list_and_fts() {
+        let (db, id) = organize_fixture();
+        assert!(db.add_tag(id, "  Travel ").unwrap());
+        assert!(db.add_tag(id, "travel").unwrap(), "idempotent");
+        assert!(db.add_tag(id, "beach").unwrap());
+        assert!(db.add_tag(id, "   ").is_err(), "blank tag rejected");
+        assert!(!db.add_tag(9999, "ghost").unwrap(), "unknown id");
+
+        let tags = db.list_tags().unwrap();
+        assert_eq!(tags.len(), 2);
+        assert_eq!(tags[0].count, 1);
+
+        let detail = db.get_screenshot_detail(id).unwrap().unwrap();
+        // Display case of first insert is preserved (uniqueness is NOCASE).
+        assert_eq!(detail.tags, vec!["beach".to_string(), "Travel".to_string()]);
+
+        // FTS denormalized column follows tag mutations.
+        let fts_tags: String = db
+            .conn
+            .query_row(
+                "SELECT tags FROM fts_search WHERE screenshot_id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let fts_lower = fts_tags.to_ascii_lowercase();
+        assert!(fts_lower.contains("beach") && fts_lower.contains("travel"));
+
+        assert!(db.remove_tag(id, "BEACH").unwrap(), "NOCASE removal");
+        assert!(!db.remove_tag(id, "beach").unwrap(), "already gone");
+        assert_eq!(db.list_tags().unwrap().len(), 1, "orphan pruned");
+        let detail = db.get_screenshot_detail(id).unwrap().unwrap();
+        assert_eq!(detail.tags, vec!["Travel".to_string()]);
+    }
+
+    #[test]
+    fn flags_and_note_roundtrip() {
+        let (db, id) = organize_fixture();
+        assert!(db.set_starred(id, true).unwrap());
+        assert!(db.set_read_later(id, true).unwrap());
+        assert!(db.set_note(id, "  trip ideas  ").unwrap());
+        assert!(!db.set_starred(9999, true).unwrap());
+
+        let detail = db.get_screenshot_detail(id).unwrap().unwrap();
+        assert!(detail.starred);
+        assert!(detail.read_later);
+        assert_eq!(detail.note, "trip ideas");
+
+        // Note text lands in FTS via the update trigger.
+        let hits: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM fts_search WHERE fts_search MATCH 'note:trip'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(hits, 1);
+
+        assert!(db.set_starred(id, false).unwrap());
+        assert!(!db.get_screenshot_detail(id).unwrap().unwrap().starred);
+    }
+
+    #[test]
+    fn collections_crud_and_items() {
+        let (db, id) = organize_fixture();
+        let other = db
+            .insert_screenshot(&NewScreenshot {
+                path: "/tmp/work.png".into(),
+                filename: "work.png".into(),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let c = db.create_collection("  Trips ").unwrap();
+        assert_eq!(c.name, "Trips");
+        let again = db.create_collection("Trips").unwrap();
+        assert_eq!(c.id, again.id, "idempotent");
+        assert!(db.create_collection("  ").is_err());
+
+        assert!(db.add_to_collection(c.id, id).unwrap());
+        assert!(db.add_to_collection(c.id, id).unwrap(), "idempotent");
+        assert!(!db.add_to_collection(c.id, 9999).unwrap());
+        assert!(!db.add_to_collection(9999, id).unwrap());
+
+        let cols = db.list_collections().unwrap();
+        assert_eq!(cols.len(), 1);
+        assert_eq!(cols[0].item_count, 1);
+
+        let items = db.list_collection_items(c.id, 10, 0).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, id);
+
+        assert!(db.remove_from_collection(c.id, other).unwrap() == false);
+        assert!(db.remove_from_collection(c.id, id).unwrap());
+        assert!(db.list_collection_items(c.id, 10, 0).unwrap().is_empty());
+
+        assert!(db.rename_collection(c.id, "Holidays").unwrap());
+        assert_eq!(db.list_collections().unwrap()[0].name, "Holidays");
+        assert!(db.delete_collection(c.id).unwrap());
+        assert!(db.list_collections().unwrap().is_empty());
+        // Screenshots survive collection deletion.
+        assert!(db.get_screenshot_detail(id).unwrap().is_some());
     }
 }
 

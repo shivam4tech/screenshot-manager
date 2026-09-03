@@ -441,3 +441,244 @@ input[type="search"]:disabled {
     opacity: 0.4;
   }
 }
+
+/* ---- organize: sidebar ---- */
+
+.library-shell {
+  display: flex;
+  min-height: 100%;
+}
+.sidebar {
+  width: 248px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  padding: 16px 12px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  position: sticky;
+  top: 0;
+  max-height: 100vh;
+  overflow-y: auto;
+}
+.side-section h4 {
+  margin: 0 0 8px 8px;
+  font-size: 0.75em;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-muted);
+}
+.side-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.side-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.side-row .side-item {
+  flex: 1;
+  min-width: 0;
+}
+.side-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  padding: 7px 10px;
+  cursor: pointer;
+  color: var(--fg);
+}
+.side-item:hover {
+  background: var(--bg-elev);
+}
+.side-item.active {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  font-weight: 600;
+}
+.side-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.side-count {
+  font-size: 0.8em;
+  color: var(--fg-muted);
+  background: var(--bg-elev);
+  border-radius: 999px;
+  padding: 1px 8px;
+  flex-shrink: 0;
+}
+.side-ops {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.icon-btn {
+  background: none;
+  border: none;
+  padding: 4px 6px;
+  cursor: pointer;
+  color: var(--fg-muted);
+  font-size: 0.85em;
+  border-radius: 6px;
+}
+.icon-btn:hover {
+  color: var(--fg);
+  background: var(--bg-elev);
+}
+.collection-add {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 0 4px;
+}
+.collection-add input {
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  min-width: 0;
+  flex: 1;
+}
+.collection-add button {
+  padding: 6px 12px;
+}
+.rename-input {
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg-elev);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 6px 10px;
+  width: 100%;
+}
+.library-shell .library {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ---- organize: grid badges ---- */
+
+.star-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  font-size: 0.85em;
+  color: #f5b301;
+  text-shadow: 0 0 3px rgb(0 0 0 / 0.6);
+}
+.cell-remove {
+  position: absolute;
+  bottom: 6px;
+  right: 6px;
+  background: rgb(0 0 0 / 0.6);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 2px 8px;
+  cursor: pointer;
+  font-size: 0.8em;
+  opacity: 0;
+}
+.cell:hover .cell-remove {
+  opacity: 1;
+}
+.cell-remove:hover {
+  background: var(--danger);
+}
+
+/* ---- organize: detail editing ---- */
+
+.detail-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.detail-actions button.toggle-on {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+.tag-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 6px 3px 12px;
+  font-size: 0.9em;
+}
+.tag-x {
+  background: none;
+  border: none;
+  padding: 0 4px;
+  cursor: pointer;
+  color: var(--fg-muted);
+  font-size: 0.85em;
+  border-radius: 50%;
+}
+.tag-x:hover {
+  color: var(--danger);
+}
+.tag-add input {
+  font: inherit;
+  color: var(--fg);
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  padding: 3px 12px;
+  width: 120px;
+}
+.note-text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.note-edit textarea {
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  width: 100%;
+  resize: vertical;
+}
+.row-gap.tight {
+  margin-top: 8px;
+}
+.row-gap.tight button {
+  padding: 6px 14px;
+}
+select.collection-add {
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  margin-top: 8px;
+  max-width: 100%;
+  width: 100%;
+}

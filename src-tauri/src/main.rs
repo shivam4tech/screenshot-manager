@@ -88,6 +88,20 @@ fn main() {
             commands::get_screenshot,
             commands::get_setting,
             commands::set_setting,
+            commands::add_tag,
+            commands::remove_tag,
+            commands::list_tags,
+            commands::set_starred,
+            commands::set_read_later,
+            commands::set_note,
+            commands::create_collection,
+            commands::rename_collection,
+            commands::delete_collection,
+            commands::list_collections,
+            commands::add_to_collection,
+            commands::remove_from_collection,
+            commands::list_collection_items,
+            commands::list_screenshot_collections,
         ])
         .run(tauri::generate_context!())
         .expect("error while running screenshot-memory");

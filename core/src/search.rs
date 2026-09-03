@@ -15,6 +15,7 @@
 //! type:png                    file format
 //! has:text / has:notext      OCR text present / absent
 //! is:duplicate                part of an exact-duplicate group
+//! is:starred / is:unstarred   starred flag set / unset
 //! in august, from july        human month names → date ranges
 //! last week, this month, yesterday, today … relative ranges
 //! ```
@@ -48,6 +49,8 @@ pub enum Filter {
     HasText(bool),
     /// Member of an exact-duplicate group.
     Duplicates(bool),
+    /// Starred flag set (true) / unset (false).
+    Starred(bool),
 }
 
 /// The result of parsing a raw query string.
@@ -193,6 +196,8 @@ impl QueryParser {
             },
             "is" => match val.to_ascii_lowercase().as_str() {
                 "duplicate" | "dup" => Some(Filter::Duplicates(true)),
+                "starred" | "star" => Some(Filter::Starred(true)),
+                "unstarred" | "notstarred" => Some(Filter::Starred(false)),
                 _ => None,
             },
             _ => None,
@@ -610,6 +615,9 @@ impl<'a> Searcher<'a> {
                         .into(),
                 ),
                 Filter::Duplicates(false) => {}
+                Filter::Starred(want) => {
+                    where_clauses.push(format!("s.starred = {}", i64::from(*want)));
+                }
             }
         }
 
@@ -927,5 +935,37 @@ mod tests {
         assert_eq!(p1.rows.len(), 1);
         assert_eq!(p2.rows.len(), 2);
         assert_ne!(p1.rows[0].row.id, p2.rows[0].row.id);
+    }
+
+    #[test]
+    fn search_starred_and_collection_filters() {
+        let db = Database::open_in_memory().unwrap();
+        let a = insert(&db, "/tmp/a.png", "a.png", 1);
+        let b = insert(&db, "/tmp/b.png", "b.png", 1);
+        db.set_starred(a, true).unwrap();
+        db.add_tag(b, "research").unwrap();
+        let c = db.create_collection("Work").unwrap();
+        db.add_to_collection(c.id, b).unwrap();
+
+        let s = Searcher::new(&db);
+        let out = s.search("is:starred", 10, 0).unwrap();
+        assert_eq!(out.total, 1);
+        assert_eq!(out.rows[0].row.id, a);
+
+        let out = s.search("is:unstarred", 10, 0).unwrap();
+        assert_eq!(out.total, 1);
+        assert_eq!(out.rows[0].row.id, b);
+
+        let out = s.search("tag:research", 10, 0).unwrap();
+        assert_eq!(out.total, 1);
+        assert_eq!(out.rows[0].row.id, b);
+
+        let out = s.search("collection:work", 10, 0).unwrap();
+        assert_eq!(out.total, 1);
+        assert_eq!(out.rows[0].row.id, b);
+
+        // Combined with free text across the joined tag path.
+        let out = s.search("research is:unstarred", 10, 0).unwrap();
+        assert_eq!(out.total, 1);
     }
 }

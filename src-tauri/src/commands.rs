@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use shotmemory_core::db::{Database, LibraryStats, ScreenshotDetail, ScreenshotRow};
+use shotmemory_core::db::{CollectionInfo, Database, LibraryStats, ScreenshotDetail, ScreenshotRow, TagInfo};
 use shotmemory_core::ocr::{OcrConfig, OcrPipeline, OcrProgress, OcrSummary, TesseractEngine};
 use shotmemory_core::platform;
 use shotmemory_core::scanner::{ScanProgress, ScanSummary, Scanner};
@@ -296,6 +296,129 @@ pub fn get_setting(state: State<AppState>, key: String) -> Result<Option<String>
 pub fn set_setting(state: State<AppState>, key: String, value: String) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     db.set_setting(&key, &value).map_err(|e| e.to_string())
+}
+
+// ---- Organize: tags, flags, notes, collections --------------------------------
+
+/// Attach a tag (created on demand). Errors on blank names, returns false
+/// for unknown screenshots.
+#[tauri::command]
+pub fn add_tag(state: State<AppState>, id: i64, name: String) -> Result<bool, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.add_tag(id, &name).map_err(|e| e.to_string())
+}
+
+/// Detach a tag. Unused tag rows are pruned.
+#[tauri::command]
+pub fn remove_tag(state: State<AppState>, id: i64, name: String) -> Result<bool, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.remove_tag(id, &name).map_err(|e| e.to_string())
+}
+
+/// Every tag in use with its screenshot count (sidebar).
+#[tauri::command]
+pub fn list_tags(state: State<AppState>) -> Result<Vec<TagInfo>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.list_tags().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_starred(state: State<AppState>, id: i64, starred: bool) -> Result<bool, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.set_starred(id, starred).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_read_later(
+    state: State<AppState>,
+    id: i64,
+    read_later: bool,
+) -> Result<bool, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.set_read_later(id, read_later).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_note(state: State<AppState>, id: i64, note: String) -> Result<bool, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.set_note(id, &note).map_err(|e| e.to_string())
+}
+
+/// Create a collection (idempotent on name) and return it with its count.
+#[tauri::command]
+pub fn create_collection(
+    state: State<AppState>,
+    name: String,
+) -> Result<CollectionInfo, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.create_collection(&name).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn rename_collection(
+    state: State<AppState>,
+    id: i64,
+    name: String,
+) -> Result<bool, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.rename_collection(id, &name).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_collection(state: State<AppState>, id: i64) -> Result<bool, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.delete_collection(id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn list_collections(state: State<AppState>) -> Result<Vec<CollectionInfo>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.list_collections().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn add_to_collection(
+    state: State<AppState>,
+    collection_id: i64,
+    screenshot_id: i64,
+) -> Result<bool, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.add_to_collection(collection_id, screenshot_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn remove_from_collection(
+    state: State<AppState>,
+    collection_id: i64,
+    screenshot_id: i64,
+) -> Result<bool, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.remove_from_collection(collection_id, screenshot_id)
+        .map_err(|e| e.to_string())
+}
+
+/// Paged items of a collection, newest first (same row shape as the grid).
+#[tauri::command]
+pub fn list_collection_items(
+    state: State<AppState>,
+    collection_id: i64,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<ScreenshotRow>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.list_collection_items(collection_id, limit, offset)
+        .map_err(|e| e.to_string())
+}
+
+/// Collections a screenshot belongs to (detail editor).
+#[tauri::command]
+pub fn list_screenshot_collections(
+    state: State<AppState>,
+    id: i64,
+) -> Result<Vec<CollectionInfo>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.screenshot_collections(id).map_err(|e| e.to_string())
 }
 
 // ---- OCR ---------------------------------------------------------------------

@@ -132,6 +132,19 @@ export interface OcrSummary {
   paused_battery: boolean;
 }
 
+export interface TagInfo {
+  name: string;
+  count: number;
+}
+
+export interface CollectionInfo {
+  id: number;
+  name: string;
+  kind: string;
+  item_count: number;
+  created_at: string;
+}
+
 export const api = {
   getAppState: () => invoke<AppStateDto>("get_app_state"),
   getDefaultDirectories: () => invoke<string[]>("get_default_directories"),
@@ -156,6 +169,33 @@ export const api = {
   startOcr: () => invoke<void>("start_ocr"),
   cancelOcr: () => invoke<void>("cancel_ocr"),
   retryOcr: () => invoke<number>("retry_ocr"),
+  addTag: (id: number, name: string) => invoke<boolean>("add_tag", { id, name }),
+  removeTag: (id: number, name: string) =>
+    invoke<boolean>("remove_tag", { id, name }),
+  listTags: () => invoke<TagInfo[]>("list_tags"),
+  setStarred: (id: number, starred: boolean) =>
+    invoke<boolean>("set_starred", { id, starred }),
+  setReadLater: (id: number, readLater: boolean) =>
+    invoke<boolean>("set_read_later", { id, readLater }),
+  setNote: (id: number, note: string) => invoke<boolean>("set_note", { id, note }),
+  createCollection: (name: string) =>
+    invoke<CollectionInfo>("create_collection", { name }),
+  renameCollection: (id: number, name: string) =>
+    invoke<boolean>("rename_collection", { id, name }),
+  deleteCollection: (id: number) => invoke<boolean>("delete_collection", { id }),
+  listCollections: () => invoke<CollectionInfo[]>("list_collections"),
+  addToCollection: (collectionId: number, screenshotId: number) =>
+    invoke<boolean>("add_to_collection", { collectionId, screenshotId }),
+  removeFromCollection: (collectionId: number, screenshotId: number) =>
+    invoke<boolean>("remove_from_collection", { collectionId, screenshotId }),
+  listCollectionItems: (collectionId: number, limit: number, offset: number) =>
+    invoke<ScreenshotRow[]>("list_collection_items", {
+      collectionId,
+      limit,
+      offset,
+    }),
+  listScreenshotCollections: (id: number) =>
+    invoke<CollectionInfo[]>("list_screenshot_collections", { id }),
 };
 
 /** Resolve a cached thumbnail to a loadable asset URL. */
