@@ -252,7 +252,7 @@ mod tests {
 
     /// Poll a condition for up to `secs`, so OS file events (which arrive
     /// asynchronously) don't make tests flaky.
-    fn wait_for<F: Fn() -> bool>(secs: u64, mut f: F) -> bool {
+    fn wait_for<F: Fn() -> bool>(secs: u64, f: F) -> bool {
         let deadline = Instant::now() + Duration::from_secs(secs);
         while Instant::now() < deadline {
             if f() {

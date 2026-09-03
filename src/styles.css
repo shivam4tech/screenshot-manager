@@ -280,6 +280,122 @@ input[type="search"]:disabled {
   color: var(--fg-muted);
   text-align: center;
 }
+.cell.clickable {
+  cursor: pointer;
+}
+.snippet {
+  font-size: 0.78em;
+  color: var(--fg-muted);
+  line-height: 1.35;
+  margin-top: 4px;
+  max-height: 3.6em;
+  overflow: hidden;
+}
+.snippet b,
+.snippet strong {
+  color: var(--accent);
+  font-weight: 600;
+}
+.search-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+.link-btn {
+  background: none;
+  border: none;
+  padding: 2px 6px;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 0.9em;
+}
+.link-btn:hover {
+  text-decoration: underline;
+}
+
+/* ---- detail overlay ---- */
+
+.detail-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+  padding: 32px;
+}
+.detail-panel {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  max-width: 980px;
+  width: 100%;
+  max-height: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(240px, 2fr);
+  overflow: hidden;
+}
+.detail-media {
+  background: var(--bg-elev);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  padding: 12px;
+}
+.detail-media img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 8px;
+}
+.detail-info {
+  padding: 18px 20px;
+  overflow-y: auto;
+  min-width: 0;
+}
+.detail-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.detail-head h3 {
+  margin: 0 0 4px;
+  font-size: 1.05em;
+  word-break: break-all;
+}
+.detail-meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 14px;
+  margin: 14px 0 0;
+  font-size: 0.9em;
+}
+.detail-meta dt {
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+.detail-meta dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.ocr-text {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.85em;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  margin: 0;
+  max-height: 320px;
+  overflow-y: auto;
+}
 .empty-state {
   text-align: center;
   max-width: 420px;
@@ -299,6 +415,14 @@ input[type="search"]:disabled {
   color: var(--fg-muted);
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.status-ocr {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
 }
 .dot {
   display: inline-block;

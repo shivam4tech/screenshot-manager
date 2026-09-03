@@ -11,7 +11,7 @@
 
 use std::path::{Path, PathBuf};
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use crate::error::CoreResult;
@@ -755,17 +755,34 @@ impl Database {
     // ---- OCR pipeline support -------------------------------------------
 
     /// Claim the next pending OCR job (atomic even across connections).
+    /// `exclude` lists ids already attempted in this pipeline run, so a
+    /// job re-queued after a failure is retried on the *next* run instead
+    /// of being re-claimed forever within the same one.
     /// Returns (screenshot_id, path) or None when the queue is empty.
-    pub fn claim_ocr_job(&self, max_attempts: i64) -> CoreResult<Option<(i64, String)>> {
+    pub fn claim_ocr_job(
+        &self,
+        max_attempts: i64,
+        exclude: &[i64],
+    ) -> CoreResult<Option<(i64, String)>> {
+        let mut sql = String::from(
+            "SELECT id FROM screenshots
+             WHERE ocr_status IN ('none', 'queued')
+               AND status = 'available'
+               AND ocr_attempts < ?1",
+        );
+        let mut bind: Vec<rusqlite::types::Value> = vec![max_attempts.into()];
+        if !exclude.is_empty() {
+            let placeholders: Vec<String> = (0..exclude.len())
+                .map(|i| format!("?{}", i + 2))
+                .collect();
+            sql.push_str(&format!(" AND id NOT IN ({})", placeholders.join(", ")));
+            bind.extend(exclude.iter().map(|&id| id.into()));
+        }
+        sql.push_str(" ORDER BY id LIMIT 1");
         let candidate: Option<i64> = self
             .conn
-            .query_row(
-                "SELECT id FROM screenshots
-                 WHERE ocr_status IN ('none', 'queued') AND ocr_attempts < ?1
-                 ORDER BY id LIMIT 1",
-                params![max_attempts],
-                |r| r.get(0),
-            )
+            .prepare(&sql)?
+            .query_row(params_from_iter(bind.iter()), |r| r.get(0))
             .optional()?;
         let Some(id) = candidate else {
             return Ok(None);
@@ -786,6 +803,20 @@ impl Database {
             |r| r.get(0),
         )?;
         Ok(Some((id, path)))
+    }
+
+    /// How many jobs the pipeline could claim right now — the accurate
+    /// denominator for OCR progress (excludes missing files and parked
+    /// failures, unlike `library_stats().ocr_pending`).
+    pub fn ocr_claimable_count(&self, max_attempts: i64) -> CoreResult<i64> {
+        Ok(self.conn.query_row(
+            "SELECT COUNT(*) FROM screenshots
+             WHERE ocr_status IN ('none', 'queued')
+               AND status = 'available'
+               AND ocr_attempts < ?1",
+            params![max_attempts],
+            |r| r.get(0),
+       )?)
     }
 
     /// Persist successful OCR output and make it searchable immediately.

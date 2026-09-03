@@ -10,8 +10,10 @@ mod commands;
 mod logger;
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
+
+use tauri::Manager;
 
 use shotmemory_core::db::Database;
 use shotmemory_core::platform::PlatformPaths;

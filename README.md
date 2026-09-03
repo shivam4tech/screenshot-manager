@@ -6,7 +6,7 @@ A local-first, cross-platform (Windows / Linux / macOS) desktop application that
 turns your existing screenshot collection into a searchable personal visual
 memory — without moving, renaming, or modifying a single file.
 
-## Status — Sprint 1 of 5 (core indexing engine)
+## Status — Sprint 2 of 5 (make it findable)
 
 Working today:
 
@@ -20,15 +20,25 @@ Working today:
 - **Thumbnail generation & disk cache** keyed by content hash (survives
   renames/moves), with a decode guard for huge images.
 - **SQLite persistence** (WAL, transactional batches, versioned migrations)
-  with an FTS5 full-text index kept in sync by triggers — records are
-  searchable by filename immediately.
+  with an FTS5 full-text index kept in sync by triggers.
 - **Onboarding UI**: welcome → folder selection (platform-appropriate
   defaults) → live scan progress → "your screenshots are searchable".
 - **Library grid** with paged thumbnails and an index-health status bar.
+- **OCR** (Sprint 2): fully local text extraction via a Tesseract sidecar —
+  background worker pipeline with atomic job claiming, retries, cancellation,
+  battery-aware pausing, and results searchable the moment they land.
+- **Ranked full-text search** (Sprint 2): weighted bm25 over filename/OCR
+  text/tags/notes, exact-phrase + recency boosts, highlighted snippets, and a
+  filter syntax (`after:2026-08-01`, `tag:research`, `app:chrome`,
+  `type:png`, `has:text`, `is:duplicate`, `"exact phrase"`, `last week`, …).
+- **Live file watching** (Sprint 2): new/changed screenshots index themselves
+  (with write-stability detection), renames keep their identity via content
+  hash, deletions mark records missing without destroying metadata.
+- **Detail overlay** (Sprint 2): full-size view with metadata, source path,
+  and extracted OCR text.
 
-Coming in later sprints: OCR (Tesseract, local), full-text search ranking +
-filters + query syntax, file watcher, timeline, collections & tags, duplicate
-manager, classification, system tray, packaging.
+Coming in later sprints: timeline, collections & tags management, duplicate
+manager, auto-classification (app/domain/category), system tray, packaging.
 
 ## Architecture
 
@@ -59,7 +69,10 @@ manager, classification, system tray, packaging.
 ## Development
 
 Prerequisites: Rust (stable), Node 20+, and on Linux the usual Tauri system
-packages (`libwebkit2gtk-4.1-dev` etc.).
+packages (`libwebkit2gtk-4.1-dev` etc.). OCR needs the `tesseract` binary on
+PATH (`tesseract-ocr` on Debian/Ubuntu, `brew install tesseract` on macOS) —
+without it, everything else still works and text extraction simply stays
+disabled.
 
 ```bash
 npm install

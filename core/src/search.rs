@@ -59,6 +59,9 @@ pub struct ParsedQuery {
     pub match_expr: Option<String>,
     /// Quoted phrases (used for the exact-phrase ranking bonus).
     pub phrases: Vec<String>,
+    /// Word pairs typed adjacently without quotes (e.g. `docker error`).
+    /// Ranking bonus only — they do not restrict which rows match.
+    pub adjacency_phrases: Vec<String>,
     pub filters: Vec<Filter>,
 }
 
@@ -92,7 +95,10 @@ impl QueryParser {
         let tokens = self.tokenize(input);
         let mut terms: Vec<String> = Vec::new();
         let mut phrases: Vec<String> = Vec::new();
+        let mut adjacency: Vec<String> = Vec::new();
         let mut filters: Vec<Filter> = Vec::new();
+        // Previous consecutive plain word, for the adjacency ranking bonus.
+        let mut prev_word: Option<String> = None;
 
         let mut i = 0;
         while i < tokens.len() {
@@ -102,6 +108,7 @@ impl QueryParser {
                     if !p.is_empty() {
                         phrases.push(p);
                     }
+                    prev_word = None;
                 }
                 Token::KeyVal(key, val) => {
                     let val = val.trim().to_string();
@@ -113,6 +120,7 @@ impl QueryParser {
                             None => terms.push(sanitize_term(&format!("{key} {val}"))),
                         }
                     }
+                    prev_word = None;
                 }
                 Token::Word(w) => {
                     if let Some((after, before)) = self.try_date_word_pair(&tokens, i, &mut i) {
@@ -122,6 +130,7 @@ impl QueryParser {
                         if let Some(b) = before {
                             filters.push(Filter::Before(b));
                         }
+                        prev_word = None;
                         continue;
                     }
                     if let Some((after, before)) = self.resolve_standalone(&w.to_ascii_lowercase())
@@ -132,10 +141,18 @@ impl QueryParser {
                         if let Some(b) = before {
                             filters.push(Filter::Before(b));
                         }
+                        prev_word = None;
                         i += 1;
                         continue;
                     }
-                    terms.push(sanitize_term(w));
+                    let term = sanitize_term(w);
+                    if !term.is_empty() {
+                        if let Some(prev) = prev_word.take() {
+                            adjacency.push(format!("{prev} {term}"));
+                        }
+                        prev_word = Some(term.clone());
+                        terms.push(term);
+                    }
                 }
             }
             i += 1;
@@ -147,6 +164,7 @@ impl QueryParser {
             raw: input.to_string(),
             match_expr,
             phrases,
+            adjacency_phrases: adjacency,
             filters,
         }
     }
@@ -327,6 +345,8 @@ fn sanitize_term(s: &str) -> String {
 }
 
 /// Build the FTS5 MATCH expression: terms AND-ed, phrases quoted.
+/// Phrase words keep their spaces — FTS5 phrase syntax matches adjacent
+/// tokens, so stripping spaces would make quoted phrases unmatchable.
 fn build_match_expr(terms: &[String], phrases: &[String]) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
     for t in terms {
@@ -335,7 +355,12 @@ fn build_match_expr(terms: &[String], phrases: &[String]) -> Option<String> {
         }
     }
     for p in phrases {
-        let clean = sanitize_term(p);
+        let clean = p
+            .split_whitespace()
+            .map(sanitize_term)
+            .filter(|w| !w.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
         if !clean.is_empty() {
             parts.push(format!("\"{clean}\""));
         }
@@ -470,38 +495,49 @@ impl<'a> Searcher<'a> {
         offset: i64,
     ) -> CoreResult<SearchOutcome> {
         let mut where_clauses: Vec<String> = vec!["s.status != 'missing'".into()];
-        let mut args: Vec<rusqlite::types::Value> = Vec::new();
-        let mut extra_select = String::new();
-        let mut order_score;
+        // WHERE/JOIN parameters, numbered 1.. — shared by the count and page
+        // queries so the count can bind exactly its own parameters.
+        let mut where_args: Vec<rusqlite::types::Value> = Vec::new();
+        // ORDER BY parameters, page query only, numbered after the where args.
+        let mut order_args: Vec<rusqlite::types::Value> = Vec::new();
+        let extra_select;
+        let order_score;
         let mut join_fts = String::new();
 
         if let Some(match_expr) = &parsed.match_expr {
-            args.push(match_expr.clone().into());
-            let match_param = args.len();
+            where_args.push(match_expr.clone().into());
+            let match_param = where_args.len();
             join_fts = format!(
                 "JOIN fts_search f ON f.screenshot_id = s.id AND fts_search MATCH ?{match_param}"
             );
             extra_select = format!(
                 ", (- {BM25_WEIGHTS}) AS relevance, snippet(fts_search, 2, '[', ']', '…', 16) AS snip"
             );
-            // Exact-phrase bonus (first phrase) + modest recency boost.
-            let phrase_boost = if let Some(first) = parsed.phrases.first() {
-                args.push(sanitize_term(first).into());
+            // Exact-phrase bonus + modest recency boost. A quoted phrase
+            // takes precedence; otherwise adjacent unquoted words act as an
+            // implied phrase (ranking only — matching is unaffected).
+            let bonus_phrase = parsed
+                .phrases
+                .first()
+                .cloned()
+                .or_else(|| parsed.adjacency_phrases.first().cloned());
+            let phrase_boost = if let Some(phrase) = bonus_phrase {
+                order_args.push(phrase.to_lowercase().into());
                 format!(
-                    "(CASE WHEN instr(lower(f.ocr_text), ?{0}) > 0 THEN 100 ELSE 0 END)",
-                    args.len()
+                    "(CASE WHEN instr(lower(f.ocr_text), ?{}) > 0 THEN 100 ELSE 0 END)",
+                    where_args.len() + order_args.len()
                 )
             } else {
                 "0".to_string()
             };
-            args.push((now_secs() - 7 * 86_400).into());
-            args.push((now_secs() - 30 * 86_400).into());
+            order_args.push((now_secs() - 7 * 86_400).into());
+            order_args.push((now_secs() - 30 * 86_400).into());
+            let r1 = where_args.len() + order_args.len() - 1;
+            let r2 = where_args.len() + order_args.len();
             order_score = format!(
                 " ORDER BY (CASE WHEN s.created_ts >= ?{r1} THEN 5 ELSE 0 END \
                  + CASE WHEN s.created_ts >= ?{r2} THEN 3 ELSE 0 END \
-                 + {phrase_boost} + relevance) DESC, s.created_ts DESC",
-                r1 = args.len() - 1,
-                r2 = args.len(),
+                 + {phrase_boost} + relevance) DESC, s.created_ts DESC"
             );
         } else {
             extra_select = ", 0.0 AS relevance, NULL AS snip".into();
@@ -512,54 +548,54 @@ impl<'a> Searcher<'a> {
         for f in &parsed.filters {
             match f {
                 Filter::After(ts) => {
-                    args.push((*ts).into());
+                    where_args.push((*ts).into());
                     where_clauses.push(format!(
                         "COALESCE(s.created_ts, s.modified_ts) >= ?{}",
-                        args.len()
+                        where_args.len()
                     ));
                 }
                 Filter::Before(ts) => {
-                    args.push((*ts).into());
+                    where_args.push((*ts).into());
                     where_clauses.push(format!(
                         "COALESCE(s.created_ts, s.modified_ts) < ?{}",
-                        args.len()
+                        where_args.len()
                     ));
                 }
                 Filter::App(v) => {
-                    args.push(format!("%{v}%").into());
-                    where_clauses.push(format!("s.app_name LIKE ?{}", args.len()));
+                    where_args.push(format!("%{v}%").into());
+                    where_clauses.push(format!("s.app_name LIKE ?{}", where_args.len()));
                 }
                 Filter::Site(v) => {
-                    let n = args.len() + 1;
-                    args.push(format!("%{v}%").into());
+                    let n = where_args.len() + 1;
+                    where_args.push(format!("%{v}%").into());
                     where_clauses.push(format!(
                         "(s.website_domain LIKE ?{n} OR s.url LIKE ?{n})"
                     ));
                 }
                 Filter::Tag(v) => {
-                    args.push(format!("%{v}%").into());
+                    where_args.push(format!("%{v}%").into());
                     where_clauses.push(format!(
                         "EXISTS (SELECT 1 FROM screenshot_tags st JOIN tags t ON t.id = st.tag_id \
                          WHERE st.screenshot_id = s.id AND t.name LIKE ?{})",
-                        args.len()
+                        where_args.len()
                     ));
                 }
                 Filter::Collection(v) => {
-                    args.push(format!("%{v}%").into());
+                    where_args.push(format!("%{v}%").into());
                     where_clauses.push(format!(
                         "EXISTS (SELECT 1 FROM collection_items ci JOIN collections c \
                          ON c.id = ci.collection_id \
                          WHERE ci.screenshot_id = s.id AND c.name LIKE ?{})",
-                        args.len()
+                        where_args.len()
                     ));
                 }
                 Filter::Dir(v) => {
-                    args.push(format!("{v}/%").into());
-                    where_clauses.push(format!("s.path LIKE ?{}", args.len()));
+                    where_args.push(format!("{v}/%").into());
+                    where_clauses.push(format!("s.path LIKE ?{}", where_args.len()));
                 }
                 Filter::Format(v) => {
-                    args.push(v.to_ascii_lowercase().into());
-                    where_clauses.push(format!("lower(s.format) = ?{}", args.len()));
+                    where_args.push(v.to_ascii_lowercase().into());
+                    where_clauses.push(format!("lower(s.format) = ?{}", where_args.len()));
                 }
                 Filter::HasText(want) => {
                     where_clauses.push(format!(
@@ -578,26 +614,21 @@ impl<'a> Searcher<'a> {
         }
 
         let where_sql = where_clauses.join(" AND ");
-        args.push(limit.into());
-        args.push(offset.into());
-        let lim = args.len() - 1;
-        let off = args.len();
 
-        let where_sql = where_clauses.join(" AND ");
-        args.push(limit.into());
-        args.push(offset.into());
-        let lim = args.len() - 1;
-        let off = args.len();
-
-        // Total count with the same filters (for "N results").
+        // Total count with the same filters (for "N results"). Binds only the
+        // WHERE/JOIN parameters — the ORDER BY and LIMIT parameters belong to
+        // the page query alone.
         let count_sql =
             format!("SELECT COUNT(*) FROM screenshots s {join_fts} WHERE {where_sql}");
-        let total: i64 = self
-            .db
-            .conn()
-            .query_row(&count_sql, params_from_iter(args.iter()), |r| r.get(0))?;
+        let total: i64 = self.db.conn().query_row(
+            &count_sql,
+            params_from_iter(where_args.iter()),
+            |r| r.get(0),
+        )?;
 
-        // Page query.
+        // Page query. LIMIT/OFFSET parameters follow the ORDER BY ones.
+        let lim = where_args.len() + order_args.len() + 1;
+        let off = lim + 1;
         let page_sql = format!(
             "SELECT {BASE_COLS}{extra_select} \
              FROM screenshots s {join_fts} \
@@ -605,9 +636,13 @@ impl<'a> Searcher<'a> {
              {order_score} \
              LIMIT ?{lim} OFFSET ?{off}"
         );
+        let mut page_args: Vec<rusqlite::types::Value> =
+            where_args.into_iter().chain(order_args).collect();
+        page_args.push(limit.into());
+        page_args.push(offset.into());
         let mut stmt = self.db.conn().prepare(&page_sql)?;
         let rows = stmt
-            .query_map(params_from_iter(args.iter()), |r| {
+            .query_map(params_from_iter(page_args.iter()), |r| {
                 Ok(SearchRow {
                     row: ScreenshotRow {
                         id: r.get(0)?,
@@ -649,16 +684,20 @@ mod tests {
     use super::*;
     use crate::db::NewScreenshot;
 
-    // Fixed clock: 2026-09-02 12:00:00 UTC.
-    const NOW: i64 = 1_787_713_600;
+    // Fixed clock: 2026-09-02 12:00:00 UTC (epoch day 20698).
+    const NOW: i64 = 1_788_350_400;
 
     fn insert(db: &Database, path: &str, filename: &str, created_days_ago: i64) -> i64 {
+        let format = std::path::Path::new(filename)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase());
         db.insert_screenshot(&NewScreenshot {
             path: path.into(),
             filename: filename.into(),
             created_ts: Some(NOW - created_days_ago * 86_400),
             modified_ts: Some(NOW - created_days_ago * 86_400),
-            format: Some("png".into()),
+            format,
             ..Default::default()
         })
         .unwrap()
@@ -702,7 +741,11 @@ mod tests {
 
         let q = p.parse("\"morphogenetic computation\" python");
         assert_eq!(q.phrases, vec!["morphogenetic computation"]);
-        assert_eq!(q.match_expr.as_deref(), Some("\"python\" \"morphogeneticcomputation\""));
+        // Phrase words keep their spaces so FTS5 can match adjacent tokens.
+        assert_eq!(
+            q.match_expr.as_deref(),
+            Some("\"python\" \"morphogenetic computation\"")
+        );
 
         // FTS operators are defused: user input can't inject query grammar.
         let q = p.parse("docker\" OR 1=1 --");
@@ -807,8 +850,9 @@ mod tests {
         set_ocr(&db, a, "pricing page screenshot");
         let b = insert(&db, "/tmp/Downloads/b.png", "b.png", 40);
         set_ocr(&db, b, "pricing table image");
-        // c has no OCR text at all
-        insert(&db, "/tmp/Downloads/c.jpg", "c.jpg", 2);
+        // c has no OCR text at all (kept outside Downloads so the dir filter
+        // below matches exactly one file).
+        insert(&db, "/tmp/Other/c.jpg", "c.jpg", 2);
 
         let s = Searcher::new(&db);
 
@@ -849,7 +893,7 @@ mod tests {
     fn search_missing_files_excluded_and_filter_only_queries_work() {
         let db = Database::open_in_memory().unwrap();
         let a = insert(&db, "/tmp/a.png", "a.png", 1);
-        db.mark_missing(&[a]);
+        db.mark_missing(&[a]).unwrap();
         insert(&db, "/tmp/b.png", "b.png", 2);
 
         let out = Searcher::new(&db).search("", 10, 0).unwrap();
@@ -885,5 +929,3 @@ mod tests {
         assert_ne!(p1.rows[0].row.id, p2.rows[0].row.id);
     }
 }
-
-// __APPEND__

@@ -15,6 +15,7 @@
 //! - Resource-friendliness: worker count, per-item delay, and optional
 //!   pause-on-battery keep OCR from hogging the machine.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -182,13 +183,18 @@ impl OcrPipeline {
 
         // Snapshot how much work exists (for progress accounting).
         let probe = Database::open(&self.db_path)?;
-        let total = probe.library_stats()?.ocr_pending.max(0) as u64;
+        let total = probe
+            .ocr_claimable_count(self.config.max_attempts)?
+            .max(0) as u64;
         drop(probe);
 
         let progress = Arc::new(Mutex::new(OcrProgress {
             total,
             ..Default::default()
         }));
+        // Ids already attempted in this run: a re-queued failure must wait
+        // for the next run rather than being re-claimed immediately.
+        let attempted: Arc<Mutex<HashSet<i64>>> = Arc::new(Mutex::new(HashSet::new()));
 
         let workers = self.config.workers.max(1);
         std::thread::scope(|scope| {
@@ -197,6 +203,7 @@ impl OcrPipeline {
                 let engine = self.engine.clone();
                 let config = self.config.clone();
                 let progress = progress.clone();
+                let attempted = attempted.clone();
                 let cancel = cancel;
                 scope.spawn(move || {
                     let Ok(db) = Database::open(&db_path) else {
@@ -206,12 +213,23 @@ impl OcrPipeline {
                         if cancel.load(Ordering::Relaxed) {
                             return;
                         }
+                        let exclude: Vec<i64> = attempted
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .iter()
+                            .copied()
+                            .collect();
                         let Some((id, path)) =
-                            db.claim_ocr_job(config.max_attempts).unwrap_or(None)
+                            db.claim_ocr_job(config.max_attempts, &exclude).unwrap_or(None)
                         else {
                             return; // queue drained
                         };
-                        let outcome = process_one(&db, engine.as_ref(), &path, id);
+                        attempted
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .insert(id);
+                        let outcome =
+                            process_one(&db, engine.as_ref(), &path, id, config.max_attempts);
                         let mut p = progress.lock().unwrap_or_else(|e| e.into_inner());
                         p.processed += 1;
                         match outcome {
@@ -268,11 +286,20 @@ enum OcrOutcome {
 
 /// Process a single claimed job. Never panics on bad input; every failure
 /// path is recorded and reported.
-fn process_one(db: &Database, engine: &dyn OcrEngine, path: &str, id: i64) -> OcrOutcome {
+fn process_one(
+    db: &Database,
+    engine: &dyn OcrEngine,
+    path: &str,
+    id: i64,
+    max_attempts: i64,
+) -> OcrOutcome {
     let file = Path::new(path);
     if !file.is_file() {
-        // The file vanished between indexing and OCR: park the record.
+        // The file vanished between indexing and OCR: park the record and
+        // re-queue OCR so text is extracted automatically if it comes back
+        // (the claim query skips missing records meanwhile).
         let _ = db.mark_missing_by_path(path);
+        let _ = db.queue_ocr(id);
         return OcrOutcome::Missing;
     }
 
@@ -281,13 +308,15 @@ fn process_one(db: &Database, engine: &dyn OcrEngine, path: &str, id: i64) -> Oc
             Ok(()) => OcrOutcome::Done,
             Err(e) => {
                 log::error!("OCR result storage failed for id {id}: {e}");
-                let _ = db.record_ocr_failure(id, i64::MAX); // retryable
+                // Storage failures park as failed (user-retryable) instead
+                // of burning attempts against a broken pipeline.
+                let _ = db.record_ocr_failure(id, i64::MAX);
                 OcrOutcome::Failed
             }
         },
         Err(e) => {
             log::warn!("OCR failed for id {id}: {e}");
-            let _ = db.record_ocr_failure(id, 3);
+            let _ = db.record_ocr_failure(id, max_attempts);
             OcrOutcome::Failed
         }
     }
