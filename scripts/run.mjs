@@ -50,6 +50,12 @@ function capture(cmd, args = []) {
   return r.status === 0 ? (r.stdout || "").trim() : null;
 }
 
+/** Run a command with full terminal I/O (for installs that may prompt). */
+function runLive(cmd, args = [], opts = {}) {
+  const r = spawnSync(cmd, args, { stdio: "inherit", shell: SHELL, ...opts });
+  return r.status === 0;
+}
+
 /** Install step: run it, or in check/no-install mode just report it. */
 function ensure(desc, checkFn, installFn) {
   if (checkFn()) {
@@ -143,14 +149,16 @@ function checkLinuxWebview() {
       console.log("   See https://v2.tauri.app/start/prerequisites/ for others.");
       return false;
     }
-    if (!run("sudo", ["-n", "true"])) {
-      console.log("   passwordless sudo is unavailable. Run manually:");
-      console.log(`   sudo apt-get update && sudo apt-get install -y ${LINUX_WEBVIEW_PKGS.join(" ")}`);
+    if (!run("sudo", ["--version"])) {
+      console.log("   sudo not found. Run manually as root:");
+      console.log(`   apt-get update && apt-get install -y ${LINUX_WEBVIEW_PKGS.join(" ")}`);
       return false;
     }
+    // Interactive sudo: prompts for your password if needed.
+    console.log("   (may prompt for your sudo password)");
     return (
-      run("sudo", ["apt-get", "update"]) &&
-      run("sudo", ["apt-get", "install", "-y", ...LINUX_WEBVIEW_PKGS])
+      runLive("sudo", ["apt-get", "update"]) &&
+      runLive("sudo", ["apt-get", "install", "-y", ...LINUX_WEBVIEW_PKGS])
     );
   });
 }
@@ -195,11 +203,12 @@ function checkTesseract() {
 
 function installTesseract() {
   if (OS === "linux" && detectApt()) {
-    if (!run("sudo", ["-n", "true"])) {
-      console.log("   run manually: sudo apt-get install -y tesseract-ocr");
+    if (!run("sudo", ["--version"])) {
+      console.log("   run manually as root: apt-get install -y tesseract-ocr");
       return false;
     }
-    return run("sudo", ["apt-get", "install", "-y", "tesseract-ocr"]);
+    console.log("   (may prompt for your sudo password)");
+    return runLive("sudo", ["apt-get", "install", "-y", "tesseract-ocr"]);
   }
   if (OS === "darwin") {
     if (!run("brew", ["--version"])) {
