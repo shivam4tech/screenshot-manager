@@ -17,15 +17,12 @@ pub fn build_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show, &scan, &quit])?;
 
-    // Prefer the bundled window icon; fall back to the shipped PNG so a
-    // packaging slip never crashes startup.
-    let icon = app
-        .default_window_icon()
-        .cloned()
-        .unwrap_or_else(|| {
-            tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))
-                .expect("bundled tray icon exists")
-        });
+    // Prefer the bundled window icon; if packaging ever drops it, skip the
+    // tray instead of crashing startup — the app works fine without one.
+    let Some(icon) = app.default_window_icon().cloned() else {
+        log::warn!("no window icon available; starting without a tray icon");
+        return Ok(());
+    };
 
     TrayIconBuilder::with_id("main")
         .icon(icon)
