@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type AppStateDto } from "./api";
+import { applyTheme, initialTheme, type Theme } from "./theme";
 import Onboarding from "./components/Onboarding";
 import Library from "./components/Library";
 import StatusBar from "./components/StatusBar";
@@ -10,6 +11,11 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>("loading");
   const [appState, setAppState] = useState<AppStateDto | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [theme, setTheme] = useState<Theme>(initialTheme);
+
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
 
   const refresh = async () => {
     try {
@@ -57,7 +63,11 @@ export default function App() {
   return (
     <div className="app-shell">
       <div className="app-main">
-        <Library appState={appState} />
+        <Library
+          appState={appState}
+          theme={theme}
+          onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+        />
       </div>
       <StatusBar appState={appState} onRefresh={refresh} />
     </div>

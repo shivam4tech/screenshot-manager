@@ -12,6 +12,10 @@ import Detail from "./Detail";
 import Timeline from "./Timeline";
 import Duplicates from "./Duplicates";
 import Settings from "./Settings";
+import Bursts from "./Bursts";
+import { BulkBar, useSelection } from "./bulk";
+import { useInfiniteLoader } from "./scroll";
+import type { Theme } from "../theme";
 
 const PAGE_SIZE = 60;
 const SEARCH_PAGE_SIZE = 60;
@@ -22,6 +26,7 @@ type View =
   | { kind: "collection"; id: number; name: string }
   | { kind: "timeline" }
   | { kind: "duplicates" }
+  | { kind: "bursts" }
   | { kind: "settings" };
 
 /** Render a snippet with [match] marks as bold nodes. */
@@ -45,11 +50,20 @@ type GridRow = Pick<
 > & { snippet?: string | null };
 
 /**
- * Library: sidebar (views, tags, collections) + paged thumbnail grid with
- * live full-text search. Clicking a shot opens the detail overlay, where
- * starring, tagging, notes, and collection membership are edited.
+ * Library: sidebar (views, tags, collections) + grid with live full-text
+ * search, multi-select bulk actions, and infinite scroll. Clicking a shot
+ * opens the detail overlay, where starring, tagging, notes, collection
+ * membership, and deletion are edited.
  */
-export default function Library({ appState }: { appState: AppStateDto | null }) {
+export default function Library({
+  appState,
+  theme,
+  onToggleTheme,
+}: {
+  appState: AppStateDto | null;
+  theme: Theme;
+  onToggleTheme: () => void;
+}) {
   const [rows, setRows] = useState<ScreenshotRow[]>([]);
   const [thumbs, setThumbs] = useState<Map<number, string>>(new Map());
   const [hasMore, setHasMore] = useState(true);
@@ -77,6 +91,7 @@ export default function Library({ appState }: { appState: AppStateDto | null }) 
   const [collectionHasMore, setCollectionHasMore] = useState(false);
   const [renamingId, setRenamingId] = useState<number | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
+  const sel = useSelection();
 
   const resolveThumbs = useCallback(async (items: { id: number; content_hash: string | null }[]) => {
     const fresh = new Map<number, string>();
@@ -166,7 +181,13 @@ export default function Library({ appState }: { appState: AppStateDto | null }) 
     !inSearch &&
     (view.kind === "timeline" ||
       view.kind === "duplicates" ||
+      view.kind === "bursts" ||
       view.kind === "settings");
+
+  // Selection never survives a context switch.
+  useEffect(() => {
+    sel.clear();
+  }, [activeQuery, view]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectCollection = (c: CollectionInfo) => {
     setQuery("");
@@ -182,6 +203,37 @@ export default function Library({ appState }: { appState: AppStateDto | null }) 
       loadCollectionItems(view.id, 0).catch(() => {});
     }
   }, [loadPage, refreshOrganize, loadCollectionItems, view]);
+
+  /** After a bulk action: drop trashed rows, clear selection, refresh counts. */
+  const afterBulk = useCallback(
+    (removedIds: number[]) => {
+      if (removedIds.length > 0) {
+        const gone = new Set(removedIds);
+        setRows((r) => r.filter((row) => !gone.has(row.id)));
+        setCollectionItems((r) => r.filter((row) => !gone.has(row.id)));
+        setSearchOutcome((o) =>
+          o ? { total: o.total - removedIds.length, rows: o.rows.filter((row) => !gone.has(row.id)) } : o
+        );
+      }
+      sel.clear();
+      refreshOrganize();
+    },
+    [refreshOrganize] // eslint-disable-line react-hooks/exhaustive-deps
+  );
+
+  /** Next page for the visible grid (ranked search stays top-N by design). */
+  const loadMoreNext = useCallback(() => {
+    if (inSearch) return;
+    if (inCollection && view.kind === "collection") {
+      loadCollectionItems(view.id, collectionItems.length).catch((e) =>
+        setOrganizeError(String(e))
+      );
+    } else {
+      loadPage(rows.length);
+    }
+  }, [inSearch, inCollection, view, collectionItems.length, rows.length, loadCollectionItems, loadPage]);
+  const gridHasMore = inSearch ? false : inCollection ? collectionHasMore : hasMore;
+  const sentinel = useInfiniteLoader(gridHasMore, loading, loadMoreNext);
 
   const createCollection = () => {
     const name = newCollection.trim();
@@ -285,6 +337,16 @@ export default function Library({ appState }: { appState: AppStateDto | null }) 
             title="Review exact and similar duplicates"
           >
             ⧉ Duplicates
+          </button>
+          <button
+            className={`side-item${view.kind === "bursts" && !inSearch ? " active" : ""}`}
+            onClick={() => {
+              setQuery("");
+              setView({ kind: "bursts" });
+            }}
+            title="Capture-time clusters with theme hints"
+          >
+            ◍ Bursts
           </button>
           <button
             className={`side-item${view.kind === "settings" && !inSearch ? " active" : ""}`}
@@ -401,6 +463,17 @@ export default function Library({ appState }: { appState: AppStateDto | null }) 
         </div>
 
         {organizeError && <p className="error small">{organizeError}</p>}
+
+        <div className="side-footer">
+          <button
+            className="theme-toggle"
+            onClick={onToggleTheme}
+            title={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
+            aria-label="Toggle color theme"
+          >
+            {theme === "dark" ? "☀ Light" : "☾ Dark"}
+          </button>
+        </div>
       </aside>
 
       <div className="library">
@@ -449,7 +522,13 @@ export default function Library({ appState }: { appState: AppStateDto | null }) 
           view.kind === "timeline" ? (
             <Timeline onOpenDetail={(id) => setDetailId(id)} />
           ) : view.kind === "duplicates" ? (
-            <Duplicates onOpenDetail={(id) => setDetailId(id)} />
+            <Duplicates onOpenDetail={(id) => setDetailId(id)} onChanged={refreshOrganize} />
+          ) : view.kind === "bursts" ? (
+            <Bursts
+              onOpenDetail={(id) => setDetailId(id)}
+              collections={collections}
+              refreshOrganize={refreshOrganize}
+            />
           ) : (
             <Settings
               onFoldersChanged={() => {
@@ -488,11 +567,27 @@ export default function Library({ appState }: { appState: AppStateDto | null }) 
           </div>
         ) : (
           <>
+            {gridRows.length > 0 && (
+              <div className="select-all-row">
+                <label className="muted small">
+                  <input
+                    type="checkbox"
+                    checked={gridRows.every((r) => sel.selected.has(r.id))}
+                    onChange={(e) =>
+                      e.target.checked
+                        ? sel.selectAll(gridRows.map((r) => r.id))
+                        : sel.clear()
+                    }
+                  />{" "}
+                  Select all shown ({gridRows.length})
+                </label>
+              </div>
+            )}
             <div className="grid">
               {gridRows.map((r) => (
                 <figure
                   key={r.id}
-                  className="cell clickable"
+                  className={`cell clickable${sel.selected.has(r.id) ? " selected" : ""}`}
                   title={r.filename}
                   onClick={() => setDetailId(r.id)}
                 >
@@ -502,6 +597,17 @@ export default function Library({ appState }: { appState: AppStateDto | null }) 
                     ) : (
                       <div className="thumb-placeholder" aria-hidden="true" />
                     )}
+                    <span
+                      className="cell-select"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={sel.selected.has(r.id)}
+                        onChange={() => sel.toggle(r.id)}
+                        aria-label={`Select ${r.filename}`}
+                      />
+                    </span>
                     {r.status !== "available" && (
                       <span className={`badge badge-${r.status}`}>{r.status}</span>
                     )}
@@ -538,30 +644,23 @@ export default function Library({ appState }: { appState: AppStateDto | null }) 
                 </figure>
               ))}
             </div>
-            {!inSearch && !inCollection && hasMore && (
-              <div className="load-more">
-                <button onClick={() => loadPage(rows.length)} disabled={loading}>
-                  {loading ? "Loading…" : "Load more"}
-                </button>
-              </div>
+            {sel.selected.size > 0 && (
+              <BulkBar
+                ids={[...sel.selected]}
+                collections={collections}
+                onDone={afterBulk}
+                onError={setOrganizeError}
+              />
             )}
-            {inCollection && view.kind === "collection" && collectionHasMore && (
-              <div className="load-more">
-                <button
-                  onClick={() => loadCollectionItems(view.id, collectionItems.length)}
-                >
-                  Load more
-                </button>
-              </div>
+            {inSearch && searchOutcome && gridRows.length < searchOutcome.total && (
+              <p className="muted small" style={{ textAlign: "center" }}>
+                Showing the top {gridRows.length} of {searchOutcome.total} — refine
+                your query to narrow it down.
+              </p>
             )}
-            {inSearch &&
-              searchOutcome &&
-              gridRows.length < searchOutcome.total && (
-                <p className="muted small" style={{ textAlign: "center" }}>
-                  Showing the top {gridRows.length} of {searchOutcome.total} — refine
-                  your query to narrow it down.
-                </p>
-              )}
+            <div ref={sentinel} className="scroll-sentinel" aria-hidden="true">
+              {!inSearch && loading ? "Loading…" : !gridHasMore && gridRows.length > 0 ? "End." : ""}
+            </div>
           </>
         )}
 

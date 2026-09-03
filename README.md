@@ -56,6 +56,21 @@ Working today:
   left-click to focus the window.
 - **Settings** (Sprint 5): watched-folder management, OCR on/off, Enrich now,
   index-health (per-file problems), and the local data location.
+- **Bulk workflows**: multi-select anything in the grid (checkboxes, select
+  all shown), then collect into an existing or brand-new collection, tag,
+  star, or trash the whole selection in one click — built for researchers
+  triaging hundreds of search results.
+- **Bursts**: capture-time clusters ("that afternoon I researched X") with
+  theme hints (dominant app, category, tags) and preview strips; drill in,
+  bulk-organize, done. Gap threshold adjustable.
+- **Safe deletion**: files go to the OS trash (recoverable), records stay as
+  `missing` with tags/collections intact. Available per-shot, per-selection,
+  per duplicate group ("keep newest only"), and per burst selection — always
+  behind confirmation.
+- **Themes**: explicit light/dark switch in the sidebar (follows the OS until
+  you pick), with readable native controls in both.
+- **Infinite scroll**: grids keep loading as you scroll; loaded pages stay
+  for the session.
 
 ## Installing
 

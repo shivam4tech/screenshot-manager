@@ -13,7 +13,7 @@ use tauri::{AppHandle, Emitter, Manager, State, Window};
 use shotmemory_core::db::{
     CollectionInfo, Database, LibraryStats, Problem, ScreenshotDetail, ScreenshotRow, TagInfo,
 };
-use shotmemory_core::insights::{DuplicateGroup, TimelineDay, TimelineMonth};
+use shotmemory_core::insights::{Burst, DuplicateGroup, TimelineDay, TimelineMonth};
 use shotmemory_core::ocr::{OcrConfig, OcrPipeline, OcrProgress, OcrSummary, TesseractEngine};
 use shotmemory_core::platform;
 use shotmemory_core::scanner::{ScanProgress, ScanSummary, Scanner};
@@ -458,6 +458,34 @@ pub fn list_screenshot_collections(
     db.screenshot_collections(id).map_err(|e| e.to_string())
 }
 
+/// Bulk-assign screenshots to a collection (multi-select, bursts, groups).
+/// Unknown ids are skipped; returns memberships confirmed.
+#[tauri::command]
+pub fn add_many_to_collection(
+    state: State<AppState>,
+    collection_id: i64,
+    screenshot_ids: Vec<i64>,
+) -> Result<usize, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.add_many_to_collection(collection_id, &screenshot_ids)
+        .map_err(|e| e.to_string())
+}
+
+// ---- Safe deletion ------------------------------------------------------------
+// Files go to the OS trash (recoverable); records are kept as `missing` so
+// metadata, tags, and memberships survive. Always behind UI confirmation.
+
+/// Move screenshots to the OS trash, mark records missing. Per-id failures
+/// are reported, never fatal to the batch.
+#[tauri::command]
+pub fn delete_screenshots(
+    state: State<AppState>,
+    ids: Vec<i64>,
+) -> Result<shotmemory_core::cleanup::DeleteSummary, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    shotmemory_core::cleanup::delete_screenshots(&db, &ids).map_err(|e| e.to_string())
+}
+
 /// Path to the local data directory (database + thumbnails) for About.
 /// Shown so users know exactly where their data lives.
 #[tauri::command]
@@ -566,6 +594,28 @@ pub fn similar_groups(
 ) -> Result<Vec<DuplicateGroup>, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     shotmemory_core::insights::similar_groups(&db, max_distance).map_err(|e| e.to_string())
+}
+
+/// Capture-time bursts (groups of 2+ within `max_gap_secs` of each other),
+/// newest first. The quick path to "that afternoon I researched X".
+#[tauri::command]
+pub fn list_bursts(state: State<AppState>, max_gap_secs: i64) -> Result<Vec<Burst>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    shotmemory_core::insights::detect_bursts(&db, max_gap_secs).map_err(|e| e.to_string())
+}
+
+/// Items captured in a burst window, newest first (burst drill-down).
+#[tauri::command]
+pub fn burst_items(
+    state: State<AppState>,
+    start_ts: i64,
+    end_ts: i64,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<ScreenshotRow>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    shotmemory_core::insights::burst_items(&db, start_ts, end_ts, limit, offset)
+        .map_err(|e| e.to_string())
 }
 
 // ---- OCR ---------------------------------------------------------------------

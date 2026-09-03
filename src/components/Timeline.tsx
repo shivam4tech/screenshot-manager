@@ -6,6 +6,7 @@ import {
   type TimelineDay,
   type TimelineMonth,
 } from "../api";
+import { useInfiniteLoader } from "./scroll";
 
 const PAGE_SIZE = 60;
 
@@ -39,6 +40,7 @@ export default function Timeline({ onOpenDetail }: { onOpenDetail: (id: number) 
   const [items, setItems] = useState<ScreenshotRow[]>([]);
   const [thumbs, setThumbs] = useState<Map<number, string>>(new Map());
   const [hasMore, setHasMore] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const resolveThumbs = useCallback(async (rows: ScreenshotRow[]) => {
@@ -70,10 +72,15 @@ export default function Timeline({ onOpenDetail }: { onOpenDetail: (id: number) 
 
   const loadDay = useCallback(
     async (day: string, offset: number) => {
-      const page = await api.timelineItems(day, PAGE_SIZE, offset);
-      setHasMore(page.length === PAGE_SIZE);
-      setItems((r) => (offset === 0 ? page : [...r, ...page]));
-      void resolveThumbs(page);
+      setLoading(true);
+      try {
+        const page = await api.timelineItems(day, PAGE_SIZE, offset);
+        setHasMore(page.length === PAGE_SIZE);
+        setItems((r) => (offset === 0 ? page : [...r, ...page]));
+        void resolveThumbs(page);
+      } finally {
+        setLoading(false);
+      }
     },
     [resolveThumbs]
   );
@@ -84,6 +91,11 @@ export default function Timeline({ onOpenDetail }: { onOpenDetail: (id: number) 
     setError(null);
     loadDay(d.date, 0).catch((e) => setError(String(e)));
   };
+
+  const loadMoreNext = useCallback(() => {
+    if (date) loadDay(date, items.length).catch((e) => setError(String(e)));
+  }, [date, items.length, loadDay]);
+  const sentinel = useInfiniteLoader(date !== null && hasMore, loading, loadMoreNext);
 
   return (
     <div className="timeline">
@@ -149,13 +161,9 @@ export default function Timeline({ onOpenDetail }: { onOpenDetail: (id: number) 
                   </figure>
                 ))}
               </div>
-              {hasMore && (
-                <div className="load-more">
-                  <button onClick={() => date && loadDay(date, items.length)}>
-                    Load more
-                  </button>
-                </div>
-              )}
+              <div ref={sentinel} className="scroll-sentinel" aria-hidden="true">
+                {loading ? "Loading…" : !hasMore && items.length > 0 ? "End." : ""}
+              </div>
             </>
           )}
         </>

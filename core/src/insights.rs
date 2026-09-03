@@ -6,7 +6,7 @@
 //! No file mutation happens here — groups are for review and bulk
 //! organization (tag, star, collect), never deletion.
 
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use serde::Serialize;
 
 use crate::db::{map_screenshot_row, Database, ScreenshotRow};
@@ -28,6 +28,156 @@ pub struct TimelineDay {
     /// "YYYY-MM-DD" key for round-tripping into [`timeline_items`].
     pub date: String,
     pub count: i64,
+}
+
+/// A burst: screenshots captured close together in time, with the theme
+/// signals (dominant app/category/tags) that describe what the burst is
+/// about. The fast path to "that afternoon I researched X".
+#[derive(Debug, Clone, Serialize)]
+pub struct Burst {
+    /// "startTs-endTs" key for round-tripping into [`burst_items`].
+    pub key: String,
+    pub start_ts: i64,
+    pub end_ts: i64,
+    pub count: i64,
+    pub top_category: Option<String>,
+    pub top_app: Option<String>,
+    pub top_tags: Vec<String>,
+    /// Content hashes of up to 4 newest members (thumbnail strip previews).
+    pub preview_hashes: Vec<Option<String>>,
+}
+
+/// Group screenshots into bursts: a new burst starts when the gap between
+/// consecutive captures exceeds `max_gap_secs` (clamped to 1 min – 1 day,
+/// default 30 min). Only groups of 2+ are returned, newest first.
+pub fn detect_bursts(db: &Database, max_gap_secs: i64) -> CoreResult<Vec<Burst>> {
+    let gap = max_gap_secs.clamp(60, 86_400);
+    let mut stmt = db.conn().prepare(
+        "SELECT id, COALESCE(created_ts, modified_ts) AS ts
+         FROM screenshots
+         WHERE COALESCE(created_ts, modified_ts) IS NOT NULL
+         ORDER BY ts",
+    )?;
+    let ordered = stmt
+        .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(stmt);
+
+    // Split into runs separated by gaps.
+    let mut runs: Vec<Vec<(i64, i64)>> = Vec::new();
+    for (id, ts) in ordered {
+        let extend = runs
+            .last()
+            .and_then(|run| run.last())
+            .map(|&(_, prev_ts)| ts - prev_ts <= gap)
+            .unwrap_or(false);
+        if extend {
+            runs.last_mut().unwrap().push((id, ts));
+        } else {
+            runs.push(vec![(id, ts)]);
+        }
+    }
+
+    let mut bursts = Vec::new();
+    for run in runs {
+        if run.len() < 2 {
+            continue;
+        }
+        let start_ts = run.first().unwrap().1;
+        let end_ts = run.last().unwrap().1;
+        bursts.push(Burst {
+            key: format!("{start_ts}-{end_ts}"),
+            start_ts,
+            end_ts,
+            count: run.len() as i64,
+            top_category: burst_mode(db, start_ts, end_ts, "category")?,
+            top_app: burst_mode(db, start_ts, end_ts, "app_name")?,
+            top_tags: burst_top_tags(db, start_ts, end_ts)?,
+            preview_hashes: burst_previews(db, start_ts, end_ts)?,
+        });
+    }
+    bursts.sort_by(|a, b| b.start_ts.cmp(&a.start_ts));
+    Ok(bursts)
+}
+
+/// Most common non-null value of a column within a time window.
+fn burst_mode(
+    db: &Database,
+    start_ts: i64,
+    end_ts: i64,
+    column: &str,
+) -> CoreResult<Option<String>> {
+    // Column is caller-controlled from a fixed set, never user input.
+    let sql = format!(
+        "SELECT {column} FROM screenshots
+         WHERE COALESCE(created_ts, modified_ts) BETWEEN ?1 AND ?2
+           AND {column} IS NOT NULL
+         GROUP BY {column} ORDER BY COUNT(*) DESC LIMIT 1"
+    );
+    Ok(db
+        .conn()
+        .query_row(&sql, params![start_ts, end_ts], |r| r.get(0))
+        .optional()?)
+}
+
+/// Up to 3 most-used tags within a time window.
+fn burst_top_tags(db: &Database, start_ts: i64, end_ts: i64) -> CoreResult<Vec<String>> {
+    let mut stmt = db.conn().prepare(
+        "SELECT t.name, COUNT(*) AS n FROM tags t
+         JOIN screenshot_tags st ON st.tag_id = t.id
+         JOIN screenshots s ON s.id = st.screenshot_id
+         WHERE COALESCE(s.created_ts, s.modified_ts) BETWEEN ?1 AND ?2
+         GROUP BY t.id ORDER BY n DESC, t.name LIMIT 3",
+    )?;
+    let tags = stmt
+        .query_map(params![start_ts, end_ts], |r| r.get(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(tags)
+}
+
+/// Content hashes of the 4 newest members (for preview strips).
+fn burst_previews(
+    db: &Database,
+    start_ts: i64,
+    end_ts: i64,
+) -> CoreResult<Vec<Option<String>>> {
+    let mut stmt = db.conn().prepare(
+        "SELECT content_hash FROM screenshots
+         WHERE COALESCE(created_ts, modified_ts) BETWEEN ?1 AND ?2
+         ORDER BY COALESCE(created_ts, modified_ts) DESC, id DESC LIMIT 4",
+    )?;
+    let hashes = stmt
+        .query_map(params![start_ts, end_ts], |r| r.get(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(hashes)
+}
+
+/// Items captured in [start_ts, end_ts], newest first (burst drill-down).
+pub fn burst_items(
+    db: &Database,
+    start_ts: i64,
+    end_ts: i64,
+    limit: i64,
+    offset: i64,
+) -> CoreResult<Vec<ScreenshotRow>> {
+    if start_ts > end_ts || start_ts < 0 {
+        return Err(CoreError::other("invalid burst range"));
+    }
+    let mut stmt = db.conn().prepare(
+        "SELECT id, path, filename, created_ts, width, height, format,
+                status, ocr_status, content_hash, phash, starred
+         FROM screenshots
+         WHERE COALESCE(created_ts, modified_ts) BETWEEN ?1 AND ?2
+         ORDER BY COALESCE(created_ts, modified_ts) DESC, id DESC
+         LIMIT ?3 OFFSET ?4",
+    )?;
+    let rows = stmt
+        .query_map(
+            params![start_ts, end_ts, limit, offset],
+            map_screenshot_row,
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
 }
 
 /// A group of screenshots that are exact or near duplicates of each other.
@@ -304,5 +454,63 @@ mod tests {
         assert_eq!(groups[0].items.len(), 3);
         // Threshold 0 splits them apart.
         assert!(similar_groups(&db, 0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn bursts_group_close_captures_with_themes() {
+        let db = Database::open_in_memory().unwrap();
+        // Cluster 1: three shots within 10 minutes, all code-flavoured.
+        // Cluster 2: two shots an hour later. Loner: days later (no burst).
+        let base = 1_787_000_000_i64;
+        let shots = [
+            ("a1.png", base, Some("chrome"), Some("code")),
+            ("a2.png", base + 300, Some("chrome"), Some("code")),
+            ("a3.png", base + 600, None, Some("code")),
+            ("b1.png", base + 7200, Some("slack"), Some("communication")),
+            ("b2.png", base + 7500, Some("slack"), None),
+            ("loner.png", base + 500_000, None, None),
+        ];
+        for (i, (name, ts, app, cat)) in shots.iter().enumerate() {
+            let id = db
+                .insert_screenshot(&NewScreenshot {
+                    path: format!("/tmp/{name}"),
+                    filename: (*name).into(),
+                    created_ts: Some(*ts),
+                    modified_ts: Some(*ts),
+                    content_hash: Some(format!("h{i}")),
+                    ..Default::default()
+                })
+                .unwrap();
+            if let Some(a) = app {
+                db.conn()
+                    .execute(
+                        "UPDATE screenshots SET app_name = ?1 WHERE id = ?2",
+                        params![a, id],
+                    )
+                    .unwrap();
+            }
+            if let Some(c) = cat {
+                db.conn()
+                    .execute(
+                        "UPDATE screenshots SET category = ?1 WHERE id = ?2",
+                        params![c, id],
+                    )
+                    .unwrap();
+            }
+        }
+
+        let bursts = detect_bursts(&db, 1800).unwrap();
+        assert_eq!(bursts.len(), 2, "two clusters, loner excluded");
+        // Newest first.
+        assert_eq!(bursts[0].count, 2);
+        assert_eq!(bursts[0].top_app.as_deref(), Some("slack"));
+        assert_eq!(bursts[1].count, 3);
+        assert_eq!(bursts[1].top_app.as_deref(), Some("chrome"));
+        assert_eq!(bursts[1].top_category.as_deref(), Some("code"));
+        assert!(!bursts[1].preview_hashes.is_empty());
+
+        let items = burst_items(&db, bursts[1].start_ts, bursts[1].end_ts, 10, 0).unwrap();
+        assert_eq!(items.len(), 3);
+        assert!(burst_items(&db, 5, 1, 10, 0).is_err());
     }
 }

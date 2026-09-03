@@ -90,6 +90,26 @@ export default function Detail({
     void mutate(() => api.setNote(id, text));
   };
 
+  const deleteSelf = () => {
+    if (
+      !window.confirm(
+        "Move this screenshot to the trash?\n\nThe file goes to the OS trash (recoverable); its record stays in the library as missing."
+      )
+    )
+      return;
+    setSaving(true);
+    api
+      .deleteScreenshots([id])
+      .then(() => {
+        onChanged();
+        onClose();
+      })
+      .catch((e) => {
+        setError(String(e));
+        setSaving(false);
+      });
+  };
+
   const memberIds = new Set(memberOf.map((c) => c.id));
   const addable = allCollections.filter((c) => !memberIds.has(c.id));
 
@@ -134,6 +154,15 @@ export default function Detail({
                   title="Save for later"
                 >
                   {detail.read_later ? "◉ Read later" : "○ Read later"}
+                </button>
+                <span style={{ flex: 1 }} />
+                <button
+                  className="danger"
+                  disabled={saving}
+                  onClick={deleteSelf}
+                  title="Move file to trash (record kept as missing)"
+                >
+                  Delete
                 </button>
               </div>
               <dl className="detail-meta">

@@ -13,7 +13,13 @@ const THRESHOLDS = [4, 8, 12];
  * for review and bulk organization. Never deletes files — actions are tag,
  * star, and add-to-collection across the whole group.
  */
-export default function Duplicates({ onOpenDetail }: { onOpenDetail: (id: number) => void }) {
+export default function Duplicates({
+  onOpenDetail,
+  onChanged,
+}: {
+  onOpenDetail: (id: number) => void;
+  onChanged: () => void;
+}) {
   const [exact, setExact] = useState<DuplicateGroup[]>([]);
   const [similar, setSimilar] = useState<DuplicateGroup[]>([]);
   const [threshold, setThreshold] = useState(8);
@@ -69,9 +75,35 @@ export default function Duplicates({ onOpenDetail }: { onOpenDetail: (id: number
     try {
       await fn();
       setNote(label);
+      onChanged();
     } catch (e) {
       setError(String(e));
     }
+  };
+
+  const trashItems = (ids: number[], label: string) =>
+    bulk("", async () => {
+      const s = await api.deleteScreenshots(ids);
+      const bits = [`${s.trashed} trashed`];
+      if (s.already_missing > 0) bits.push(`${s.already_missing} already gone`);
+      if (s.failed.length > 0) bits.push(`${s.failed.length} failed`);
+      setNote(`${label}: ${bits.join(", ")}. Records kept as missing.`);
+      await reload(threshold);
+    });
+
+  const trashGroupExceptNewest = (g: DuplicateGroup) => {
+    if (g.items.length < 2) return;
+    if (
+      !window.confirm(
+        `Move ${g.items.length - 1} older copies to the trash and keep only the newest?\n\nFiles go to the OS trash (recoverable); records stay as missing.`
+      )
+    )
+      return;
+    // Items are newest-first, so everything past the first goes.
+    void trashItems(
+      g.items.slice(1).map((r) => r.id),
+      "Duplicates cleared"
+    );
   };
 
   const renderGroup = (g: DuplicateGroup, gi: number) => {
@@ -107,6 +139,17 @@ export default function Duplicates({ onOpenDetail }: { onOpenDetail: (id: number
                     ★
                   </span>
                 )}
+                <button
+                  className="cell-remove"
+                  title="Move to trash (record kept as missing)"
+                  aria-label={`Delete ${r.filename}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void trashItems([r.id], "Deleted");
+                  }}
+                >
+                  ✕
+                </button>
               </div>
               <figcaption>{r.filename}</figcaption>
             </figure>
@@ -123,6 +166,15 @@ export default function Duplicates({ onOpenDetail }: { onOpenDetail: (id: number
           >
             ★ Star all
           </button>
+          {g.items.length > 1 && (
+            <button
+              className="link-btn danger-text"
+              onClick={() => trashGroupExceptNewest(g)}
+              title="Trash every copy but the newest (recoverable via OS trash)"
+            >
+              Keep newest only
+            </button>
+          )}
           <span className="dup-tag-add">
             <input
               type="text"

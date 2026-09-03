@@ -1222,6 +1222,55 @@ impl Database {
         )? > 0)
     }
 
+    /// Add many screenshots to a collection in one transaction (bulk assign
+    /// from search results, bursts, duplicate groups...). Unknown screenshot
+    /// ids are skipped. Returns the number of memberships present afterwards
+    /// for the given ids (includes pre-existing ones).
+    pub fn add_many_to_collection(
+        &self,
+        collection_id: i64,
+        screenshot_ids: &[i64],
+    ) -> CoreResult<usize> {
+        let collection: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT 1 FROM collections WHERE id = ?1",
+                params![collection_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if collection.is_none() {
+            return Err(crate::error::CoreError::other("collection not found"));
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        let mut confirmed = 0usize;
+        for sid in screenshot_ids {
+            let n = tx.execute(
+                "INSERT INTO collection_items(collection_id, screenshot_id)
+                 SELECT ?1, ?2 WHERE EXISTS (SELECT 1 FROM screenshots WHERE id = ?2)
+                 ON CONFLICT(collection_id, screenshot_id) DO NOTHING",
+                params![collection_id, sid],
+            )?;
+            // Count both fresh inserts and pre-existing memberships.
+            if n > 0 {
+                confirmed += 1;
+            } else {
+                let member: Option<i64> = tx
+                    .query_row(
+                        "SELECT 1 FROM collection_items WHERE collection_id = ?1 AND screenshot_id = ?2",
+                        params![collection_id, sid],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
+                if member.is_some() {
+                    confirmed += 1;
+                }
+            }
+        }
+        tx.commit()?;
+        Ok(confirmed)
+    }
+
     /// Paged items of a collection, newest first (same row shape as the grid).
     pub fn list_collection_items(
         &self,
@@ -1605,6 +1654,24 @@ mod tests {
         assert!(db.list_collections().unwrap().is_empty());
         // Screenshots survive collection deletion.
         assert!(db.get_screenshot_detail(id).unwrap().is_some());
+    }
+
+    #[test]
+    fn bulk_add_to_collection() {
+        let (db, id) = organize_fixture();
+        let other = db
+            .insert_screenshot(&NewScreenshot {
+                path: "/tmp/second.png".into(),
+                filename: "second.png".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        let c = db.create_collection("Bulk").unwrap();
+        // Unknown ids are skipped; pre-existing memberships still count.
+        assert_eq!(db.add_many_to_collection(c.id, &[id, other, 9999]).unwrap(), 2);
+        assert_eq!(db.add_many_to_collection(c.id, &[id, other]).unwrap(), 2);
+        assert_eq!(db.list_collection_items(c.id, 10, 0).unwrap().len(), 2);
+        assert!(db.add_many_to_collection(4242, &[id]).is_err());
     }
 }
 

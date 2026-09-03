@@ -163,6 +163,29 @@ export interface DuplicateGroup {
   items: ScreenshotRow[];
 }
 
+export interface Burst {
+  key: string;
+  start_ts: number;
+  end_ts: number;
+  count: number;
+  top_category: string | null;
+  top_app: string | null;
+  top_tags: string[];
+  preview_hashes: Array<string | null>;
+}
+
+export interface DeleteFailure {
+  id: number;
+  path: string | null;
+  message: string;
+}
+
+export interface DeleteSummary {
+  trashed: number;
+  already_missing: number;
+  failed: DeleteFailure[];
+}
+
 export interface Problem {
   id: number;
   path: string | null;
@@ -227,6 +250,10 @@ export const api = {
     }),
   listScreenshotCollections: (id: number) =>
     invoke<CollectionInfo[]>("list_screenshot_collections", { id }),
+  addManyToCollection: (collectionId: number, screenshotIds: number[]) =>
+    invoke<number>("add_many_to_collection", { collectionId, screenshotIds }),
+  deleteScreenshots: (ids: number[]) =>
+    invoke<DeleteSummary>("delete_screenshots", { ids }),
   timelineMonths: () => invoke<TimelineMonth[]>("timeline_months"),
   timelineDays: (year: number, month: number) =>
     invoke<TimelineDay[]>("timeline_days", { year, month }),
@@ -236,6 +263,10 @@ export const api = {
     invoke<DuplicateGroup[]>("exact_duplicate_groups"),
   similarGroups: (maxDistance: number) =>
     invoke<DuplicateGroup[]>("similar_groups", { maxDistance }),
+  listBursts: (maxGapSecs: number) =>
+    invoke<Burst[]>("list_bursts", { maxGapSecs }),
+  burstItems: (startTs: number, endTs: number, limit: number, offset: number) =>
+    invoke<ScreenshotRow[]>("burst_items", { startTs, endTs, limit, offset }),
   listProblems: (limit: number) => invoke<Problem[]>("list_problems", { limit }),
   clearProblems: () => invoke<void>("clear_problems"),
   getDataDir: () => invoke<string>("get_data_dir"),
