@@ -492,6 +492,14 @@ impl<'a> Searcher<'a> {
         self.execute(&parsed, limit, offset)
     }
 
+    /// Every matching id in ranked order (for select-all across the whole
+    /// result set while only the top page renders). Capped for sanity.
+    pub fn search_ids(&self, query: &str, limit: i64) -> CoreResult<Vec<i64>> {
+        const MAX_IDS: i64 = 100_000;
+        let out = self.search(query, limit.clamp(1, MAX_IDS), 0)?;
+        Ok(out.rows.into_iter().map(|r| r.row.id).collect())
+    }
+
     /// Run an already-parsed query.
     pub fn execute(
         &self,

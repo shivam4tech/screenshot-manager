@@ -793,6 +793,34 @@ impl Database {
         Ok(rows)
     }
 
+    /// Every screenshot id in library order (for select-all across the
+    /// whole view while the grid renders incrementally).
+    pub fn all_screenshot_ids(&self) -> CoreResult<Vec<i64>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id FROM screenshots
+             ORDER BY COALESCE(created_ts, modified_ts) DESC, id DESC",
+        )?;
+        let ids = stmt
+            .query_map([], |r| r.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(ids)
+    }
+
+    /// Every item id of a collection in display order (for select-all).
+    pub fn collection_item_ids(&self, collection_id: i64) -> CoreResult<Vec<i64>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT s.id
+             FROM screenshots s
+             JOIN collection_items ci ON ci.screenshot_id = s.id
+             WHERE ci.collection_id = ?1
+             ORDER BY COALESCE(s.created_ts, s.modified_ts) DESC, s.id DESC",
+        )?;
+        let ids = stmt
+            .query_map(params![collection_id], |r| r.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(ids)
+    }
+
     pub fn get_setting(&self, key: &str) -> CoreResult<Option<String>> {
         Ok(self
             .conn

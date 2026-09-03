@@ -180,6 +180,42 @@ pub fn burst_items(
     Ok(rows)
 }
 
+/// Every id in a burst window, newest first (select-all for bursts).
+pub fn burst_range_ids(
+    db: &Database,
+    start_ts: i64,
+    end_ts: i64,
+) -> CoreResult<Vec<i64>> {
+    if start_ts > end_ts || start_ts < 0 {
+        return Err(CoreError::other("invalid burst range"));
+    }
+    let mut stmt = db.conn().prepare(
+        "SELECT id FROM screenshots
+         WHERE COALESCE(created_ts, modified_ts) BETWEEN ?1 AND ?2
+         ORDER BY COALESCE(created_ts, modified_ts) DESC, id DESC",
+    )?;
+    let ids = stmt
+        .query_map(params![start_ts, end_ts], |r| r.get(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(ids)
+}
+
+/// Every id captured on one local day, newest first (select-all for days).
+pub fn timeline_item_ids(db: &Database, date: &str) -> CoreResult<Vec<i64>> {
+    if !valid_day(date) {
+        return Err(CoreError::other("date must be YYYY-MM-DD"));
+    }
+    let mut stmt = db.conn().prepare(
+        "SELECT id FROM screenshots
+         WHERE date(datetime(COALESCE(created_ts, modified_ts), 'unixepoch', 'localtime')) = ?1
+         ORDER BY COALESCE(created_ts, modified_ts) DESC, id DESC",
+    )?;
+    let ids = stmt
+        .query_map(params![date], |r| r.get(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(ids)
+}
+
 /// A group of screenshots that are exact or near duplicates of each other.
 #[derive(Debug, Clone, Serialize)]
 pub struct DuplicateGroup {

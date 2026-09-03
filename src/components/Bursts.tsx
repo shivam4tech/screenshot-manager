@@ -54,6 +54,7 @@ export default function Bursts({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [culling, setCulling] = useState(false);
+  const [selectingAll, setSelectingAll] = useState(false);
   const sel = useSelection();
 
   const resolveThumbs = useCallback(
@@ -156,6 +157,20 @@ export default function Bursts({
     afterBulk(trashedIds);
   };
 
+  const openB = bursts.find((x) => x.key === openKey) ?? null;
+
+  const selectAllInBurst = async () => {
+    if (!openB) return;
+    setSelectingAll(true);
+    try {
+      sel.selectAll(await api.burstRangeIds(openB.start_ts, openB.end_ts));
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSelectingAll(false);
+    }
+  };
+
   return (
     <div className="bursts">
       <div className="dup-toolbar">
@@ -227,8 +242,25 @@ export default function Bursts({
                           : sel.clear()
                       }
                     />{" "}
-                    Select all in burst
+                    Select shown ({items.length})
                   </label>
+                  {openB && openB.count > items.length && (
+                    <button
+                      className="link-btn"
+                      disabled={selectingAll}
+                      onClick={() => void selectAllInBurst()}
+                      title="Select the whole burst, not just what's loaded"
+                    >
+                      {selectingAll
+                        ? "Selecting…"
+                        : `Select all ${openB.count} in burst`}
+                    </button>
+                  )}
+                  {sel.selected.size > 0 && (
+                    <span className="muted small">
+                      {sel.selected.size.toLocaleString()} selected
+                    </span>
+                  )}
                   <button
                     className="link-btn"
                     onClick={() => setCulling(true)}

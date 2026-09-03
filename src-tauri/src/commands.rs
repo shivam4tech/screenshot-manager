@@ -256,6 +256,56 @@ pub fn list_screenshots(
     db.list_screenshots(limit, offset).map_err(|e| e.to_string())
 }
 
+// ---- Select-all-total ---------------------------------------------------------
+// The grid renders incrementally (infinite scroll) but selection means the
+// whole view. These lightweight id lists back "select all N" per context.
+
+/// Every screenshot id in library order.
+#[tauri::command]
+pub fn all_screenshot_ids(state: State<AppState>) -> Result<Vec<i64>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.all_screenshot_ids().map_err(|e| e.to_string())
+}
+
+/// Every id of a ranked search (capped server-side).
+#[tauri::command]
+pub fn search_ids(state: State<AppState>, query: String, limit: i64) -> Result<Vec<i64>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    Searcher::new(&db)
+        .search_ids(&query, limit)
+        .map_err(|e| e.to_string())
+}
+
+/// Every item id of a collection in display order.
+#[tauri::command]
+pub fn collection_item_ids(
+    state: State<AppState>,
+    collection_id: i64,
+) -> Result<Vec<i64>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.collection_item_ids(collection_id)
+        .map_err(|e| e.to_string())
+}
+
+/// Every id captured on one local day ("YYYY-MM-DD"), newest first.
+#[tauri::command]
+pub fn timeline_item_ids(state: State<AppState>, date: String) -> Result<Vec<i64>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    shotmemory_core::insights::timeline_item_ids(&db, &date).map_err(|e| e.to_string())
+}
+
+/// Every id in a burst window, newest first.
+#[tauri::command]
+pub fn burst_range_ids(
+    state: State<AppState>,
+    start_ts: i64,
+    end_ts: i64,
+) -> Result<Vec<i64>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    shotmemory_core::insights::burst_range_ids(&db, start_ts, end_ts)
+        .map_err(|e| e.to_string())
+}
+
 /// Resolve the cached thumbnail path for a screenshot's content hash.
 /// The frontend loads it through the asset protocol (no pixel work in JS).
 ///

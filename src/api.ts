@@ -223,6 +223,15 @@ export const api = {
   getStats: () => invoke<LibraryStats>("get_stats"),
   listScreenshots: (limit: number, offset: number) =>
     invoke<ScreenshotRow[]>("list_screenshots", { limit, offset }),
+  allScreenshotIds: () => invoke<number[]>("all_screenshot_ids"),
+  searchIds: (query: string, limit: number) =>
+    invoke<number[]>("search_ids", { query, limit }),
+  collectionItemIds: (collectionId: number) =>
+    invoke<number[]>("collection_item_ids", { collectionId }),
+  timelineItemIds: (date: string) =>
+    invoke<number[]>("timeline_item_ids", { date }),
+  burstRangeIds: (startTs: number, endTs: number) =>
+    invoke<number[]>("burst_range_ids", { startTs, endTs }),
   getThumbnailPath: (contentHash: string, size: number) =>
     invoke<string | null>("get_thumbnail_path", { contentHash, size }),
   search: (query: string, limit: number, offset: number) =>

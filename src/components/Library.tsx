@@ -93,6 +93,8 @@ export default function Library({
   const [collectionHasMore, setCollectionHasMore] = useState(false);
   const [renamingId, setRenamingId] = useState<number | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
+  const [totalAll, setTotalAll] = useState(0);
+  const [selectingAll, setSelectingAll] = useState(false);
   const sel = useSelection();
 
   const resolveThumbs = useCallback(async (items: { id: number; content_hash: string | null }[]) => {
@@ -124,9 +126,14 @@ export default function Library({
 
   const refreshOrganize = useCallback(async () => {
     try {
-      const [t, c] = await Promise.all([api.listTags(), api.listCollections()]);
+      const [t, c, s] = await Promise.all([
+        api.listTags(),
+        api.listCollections(),
+        api.getStats(),
+      ]);
       setTags(t);
       setCollections(c);
+      setTotalAll(s.total);
       setOrganizeError(null);
     } catch (e) {
       setOrganizeError(String(e));
@@ -281,6 +288,30 @@ export default function Library({
     : inCollection
       ? collectionItems
       : rows;
+
+  // Total behind the current view (what "select all" means — the grid only
+  // renders a window of it via infinite scroll).
+  const viewTotal = inSearch
+    ? (searchOutcome?.total ?? 0)
+    : inCollection && view.kind === "collection"
+      ? (collections.find((c) => c.id === view.id)?.item_count ?? collectionItems.length)
+      : totalAll;
+
+  const selectAllTotal = async () => {
+    setSelectingAll(true);
+    try {
+      const ids = inSearch
+        ? await api.searchIds(activeQuery, searchOutcome?.total ?? SEARCH_PAGE_SIZE)
+        : inCollection && view.kind === "collection"
+          ? await api.collectionItemIds(view.id)
+          : await api.allScreenshotIds();
+      sel.selectAll(ids);
+    } catch (e) {
+      setOrganizeError(String(e));
+    } finally {
+      setSelectingAll(false);
+    }
+  };
 
   const dateLabel = (ts: number | null) => {
     if (!ts) return "";
@@ -592,8 +623,25 @@ export default function Library({
                         : sel.clear()
                     }
                   />{" "}
-                  Select all shown ({gridRows.length})
+                  Select shown ({gridRows.length})
                 </label>
+                {viewTotal > gridRows.length && (
+                  <button
+                    className="link-btn"
+                    disabled={selectingAll}
+                    onClick={() => void selectAllTotal()}
+                    title="Select everything in this view, not just what's loaded"
+                  >
+                    {selectingAll
+                      ? "Selecting…"
+                      : `Select all ${viewTotal.toLocaleString()} in view`}
+                  </button>
+                )}
+                {sel.selected.size > 0 && (
+                  <span className="muted small">
+                    {sel.selected.size.toLocaleString()} selected
+                  </span>
+                )}
               </div>
             )}
             <div className="grid">
