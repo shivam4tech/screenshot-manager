@@ -59,13 +59,17 @@ Working today:
 
 ## Installing
 
-- **From source**: follow Development below, then `npm run tauri build` —
-  bundles land in `src-tauri/target/release/bundle/` (`.deb`/`.AppImage` on
-  Linux, NSIS installer on Windows, `.dmg` on macOS).
-- **Prerequisites**: Rust (stable), Node 20+. On Linux, the Tauri system
-  packages (`libwebkit2gtk-4.1-dev`, `libgtk-3-dev`,
-  `libayatana-appindicator3-dev` for the tray, `librsvg2-dev`, `patchelf`).
-  OCR needs the `tesseract` binary on PATH.
+- **Easiest — download**: grab the installer for your OS from the
+  [Releases page](../../releases) (`.deb` / `.AppImage` on Linux, setup on
+  Windows, `.dmg` on macOS) and run it. No build needed.
+- **One command — run from source**: `npm run app` checks your toolchain,
+  installs OS dependencies automatically (webview libs + Tesseract where a
+  package manager exists), installs JS deps, and opens the app. Diagnose
+  without changing anything via `npm run app:check`.
+- **Prerequisites** (only if you skip the launcher): Rust (stable), Node 20+.
+  On Linux, the Tauri system packages (`libwebkit2gtk-4.1-dev`,
+  `libgtk-3-dev`, `libayatana-appindicator3-dev` for the tray,
+  `librsvg2-dev`, `patchelf`). OCR needs the `tesseract` binary on PATH.
 
 ## Architecture
 
@@ -117,4 +121,6 @@ npm run tauri dev
 ## CI
 
 GitHub Actions builds and tests on Ubuntu, Windows, and macOS runners on every
-push to `main` (see `.github/workflows/ci.yml`).
+push to `main` (see `.github/workflows/ci.yml`). Pushing a `v*` tag builds
+installers and publishes a Release (see `release.yml`); keep the tag in sync
+with the versions in `package.json` and `tauri.conf.json`.

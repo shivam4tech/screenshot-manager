@@ -4,6 +4,8 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
+    "app": "node scripts/run.mjs",
+    "app:check": "node scripts/run.mjs --check",
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
