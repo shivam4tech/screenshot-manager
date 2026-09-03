@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State, Window};
 
 use shotmemory_core::db::{
     CollectionInfo, Database, LibraryStats, Problem, ScreenshotDetail, ScreenshotRow, TagInfo,
@@ -119,15 +119,23 @@ pub fn remove_directory(state: State<AppState>, id: i64) -> Result<(), String> {
 }
 
 /// Open a native folder picker. Returns the chosen path, if any.
+///
+/// Async + parented on purpose: the blocking variant deadlocks the event
+/// loop when the command runs on the main thread (freeze: no dialog opens,
+/// app must be force-quit). The `Window` param is the calling webview, used
+/// as the dialog parent so it always appears above the app.
 #[tauri::command]
-pub fn pick_folder(app: AppHandle) -> Result<Option<String>, String> {
+pub async fn pick_folder(window: Window, app: AppHandle) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
-    let picked = app
-        .dialog()
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
         .file()
-        .blocking_pick_folder()
-        .map(|p| p.to_string());
-    Ok(picked)
+        .set_parent(&window)
+        .set_title("Choose a screenshot folder")
+        .pick_folder(move |picked| {
+            let _ = tx.send(picked.map(|p| p.to_string()));
+        });
+    rx.await.map_err(|e| e.to_string())
 }
 
 /// Start a full scan of all registered directories on a background thread.
