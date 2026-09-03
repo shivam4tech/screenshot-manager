@@ -149,6 +149,22 @@ export default function Detail({
                 <dd>{detail.status}</dd>
                 <dt>Path</dt>
                 <dd className="mono small">{detail.path}</dd>
+                {(detail.app_name || detail.category) && (
+                  <>
+                    <dt>Source</dt>
+                    <dd>
+                      {[detail.app_name, detail.website_domain, detail.category]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </dd>
+                  </>
+                )}
+                {detail.url && (
+                  <>
+                    <dt>Link</dt>
+                    <dd className="mono small">{detail.url}</dd>
+                  </>
+                )}
                 <dt>Tags</dt>
                 <dd>
                   <div className="tag-row">

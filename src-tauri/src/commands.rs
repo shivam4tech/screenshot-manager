@@ -10,7 +10,9 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use shotmemory_core::db::{CollectionInfo, Database, LibraryStats, ScreenshotDetail, ScreenshotRow, TagInfo};
+use shotmemory_core::db::{
+    CollectionInfo, Database, LibraryStats, Problem, ScreenshotDetail, ScreenshotRow, TagInfo,
+};
 use shotmemory_core::insights::{DuplicateGroup, TimelineDay, TimelineMonth};
 use shotmemory_core::ocr::{OcrConfig, OcrPipeline, OcrProgress, OcrSummary, TesseractEngine};
 use shotmemory_core::platform;
@@ -159,6 +161,9 @@ pub fn start_scan(app: AppHandle, state: State<AppState>) -> Result<(), String> 
         if let Ok(stats_db) = Database::open(&db_path) {
             let _ = stats_db.set_setting("onboarded", "1");
         }
+        // Filename/path signals are available immediately — enrich now; the
+        // OCR pass re-runs enrichment once text lands.
+        enrich_quietly(&db_path);
         match result {
             Ok(summary) => {
                 log::info!(
@@ -422,6 +427,64 @@ pub fn list_screenshot_collections(
     db.screenshot_collections(id).map_err(|e| e.to_string())
 }
 
+/// Path to the local data directory (database + thumbnails) for About.
+/// Shown so users know exactly where their data lives.
+#[tauri::command]
+pub fn get_data_dir(state: State<AppState>) -> String {
+    state
+        .db_path
+        .parent()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// Recent per-file problems for the Settings health list.
+#[tauri::command]
+pub fn list_problems(state: State<AppState>, limit: i64) -> Result<Vec<Problem>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.list_problems(limit).map_err(|e| e.to_string())
+}
+
+/// Clear all recorded problems (e.g. after a successful re-scan).
+#[tauri::command]
+pub fn clear_problems(state: State<AppState>) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.clear_problems().map_err(|e| e.to_string())
+}
+
+// ---- Enrichment ---------------------------------------------------------------
+// Heuristic app/site/category classification. Fast, local, idempotent — safe
+// to run automatically after scans and OCR passes, plus on demand.
+
+/// Enrich records missing app/site/category guesses. Returns the summary.
+#[tauri::command]
+pub fn run_classification(
+    state: State<AppState>,
+) -> Result<shotmemory_core::classify::ClassifySummary, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    shotmemory_core::classify::apply_classification(&db).map_err(|e| e.to_string())
+}
+
+/// Best-effort enrichment on a background connection. Used after scans and
+/// OCR runs so new signals (filenames first, OCR text later) are picked up
+/// without user action. Failures only log — enrichment never breaks flows.
+fn enrich_quietly(db_path: &std::path::Path) {
+    match Database::open(db_path) {
+        Ok(db) => match shotmemory_core::classify::apply_classification(&db) {
+            Ok(s) if s.updated > 0 => {
+                log::info!(
+                    "classification enriched {} of {} screenshots",
+                    s.updated,
+                    s.examined
+                );
+            }
+            Ok(_) => {}
+            Err(e) => log::warn!("classification pass failed: {e}"),
+        },
+        Err(e) => log::warn!("classification pass could not open db: {e}"),
+    }
+}
+
 // ---- Timeline & duplicates ----------------------------------------------------
 // Read-only review surfaces (Sprint 4). Groups are for bulk organization —
 // tagging, starring, collecting — never file deletion.
@@ -526,6 +589,10 @@ fn spawn_ocr_run(app: AppHandle) -> Result<(), String> {
                     summary.cancelled
                 );
                 let _ = app.emit(OCR_COMPLETE_EVENT, &summary);
+                // Fresh OCR text unlocks domain/category guesses.
+                if let Some(st) = app.try_state::<AppState>() {
+                    enrich_quietly(&st.db_path);
+                }
             }
             Err(e) => {
                 log::error!("OCR pipeline failed: {e}");

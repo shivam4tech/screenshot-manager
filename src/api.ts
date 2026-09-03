@@ -163,6 +163,19 @@ export interface DuplicateGroup {
   items: ScreenshotRow[];
 }
 
+export interface Problem {
+  id: number;
+  path: string | null;
+  kind: string;
+  message: string;
+  created_at: string;
+}
+
+export interface ClassifySummary {
+  examined: number;
+  updated: number;
+}
+
 export const api = {
   getAppState: () => invoke<AppStateDto>("get_app_state"),
   getDefaultDirectories: () => invoke<string[]>("get_default_directories"),
@@ -223,6 +236,10 @@ export const api = {
     invoke<DuplicateGroup[]>("exact_duplicate_groups"),
   similarGroups: (maxDistance: number) =>
     invoke<DuplicateGroup[]>("similar_groups", { maxDistance }),
+  listProblems: (limit: number) => invoke<Problem[]>("list_problems", { limit }),
+  clearProblems: () => invoke<void>("clear_problems"),
+  getDataDir: () => invoke<string>("get_data_dir"),
+  runClassification: () => invoke<ClassifySummary>("run_classification"),
 };
 
 /** Resolve a cached thumbnail to a loadable asset URL. */

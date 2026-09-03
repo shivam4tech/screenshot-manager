@@ -796,3 +796,56 @@ select.collection-add {
   padding: 3px 12px;
   width: 110px;
 }
+
+/* ---- settings ---- */
+
+.settings {
+  max-width: 640px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.settings h2 {
+  margin: 4px 0 8px;
+}
+.settings section {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+.settings section h3 {
+  margin: 0 0 6px;
+  font-size: 1em;
+}
+.settings-folders {
+  list-style: none;
+  margin: 10px 0;
+  padding: 0;
+  max-height: none;
+}
+.settings-folders .folder-row {
+  cursor: default;
+  justify-content: space-between;
+}
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+.problem-list {
+  list-style: none;
+  margin: 10px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.problem-list li {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+}

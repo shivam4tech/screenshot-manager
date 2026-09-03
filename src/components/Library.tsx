@@ -11,6 +11,7 @@ import {
 import Detail from "./Detail";
 import Timeline from "./Timeline";
 import Duplicates from "./Duplicates";
+import Settings from "./Settings";
 
 const PAGE_SIZE = 60;
 const SEARCH_PAGE_SIZE = 60;
@@ -20,7 +21,8 @@ type View =
   | { kind: "all" }
   | { kind: "collection"; id: number; name: string }
   | { kind: "timeline" }
-  | { kind: "duplicates" };
+  | { kind: "duplicates" }
+  | { kind: "settings" };
 
 /** Render a snippet with [match] marks as bold nodes. */
 function Snippet({ text }: { text: string }) {
@@ -161,7 +163,10 @@ export default function Library({ appState }: { appState: AppStateDto | null }) 
   const inSearch = activeQuery.length > 0;
   const inCollection = !inSearch && view.kind === "collection";
   const inSpecial =
-    !inSearch && (view.kind === "timeline" || view.kind === "duplicates");
+    !inSearch &&
+    (view.kind === "timeline" ||
+      view.kind === "duplicates" ||
+      view.kind === "settings");
 
   const selectCollection = (c: CollectionInfo) => {
     setQuery("");
@@ -280,6 +285,16 @@ export default function Library({ appState }: { appState: AppStateDto | null }) 
             title="Review exact and similar duplicates"
           >
             ⧉ Duplicates
+          </button>
+          <button
+            className={`side-item${view.kind === "settings" && !inSearch ? " active" : ""}`}
+            onClick={() => {
+              setQuery("");
+              setView({ kind: "settings" });
+            }}
+            title="Folders, OCR, enrichment, index health"
+          >
+            ⚙ Settings
           </button>
         </nav>
 
@@ -433,8 +448,15 @@ export default function Library({ appState }: { appState: AppStateDto | null }) 
         {inSpecial ? (
           view.kind === "timeline" ? (
             <Timeline onOpenDetail={(id) => setDetailId(id)} />
-          ) : (
+          ) : view.kind === "duplicates" ? (
             <Duplicates onOpenDetail={(id) => setDetailId(id)} />
+          ) : (
+            <Settings
+              onFoldersChanged={() => {
+                loadPage(0);
+                refreshOrganize();
+              }}
+            />
           )
         ) : searchError ? (
           <div className="empty-state">

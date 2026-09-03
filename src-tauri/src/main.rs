@@ -8,6 +8,7 @@
 
 mod commands;
 mod logger;
+mod tray;
 
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
@@ -67,6 +68,9 @@ fn main() {
 
             // Resume any OCR work left over from a previous session.
             let _ = commands::spawn_ocr_if_enabled(app.handle().clone());
+
+            // Tray icon: show / scan / quit.
+            tray::build_tray(app)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -107,6 +111,10 @@ fn main() {
             commands::timeline_items,
             commands::exact_duplicate_groups,
             commands::similar_groups,
+            commands::list_problems,
+            commands::clear_problems,
+            commands::get_data_dir,
+            commands::run_classification,
         ])
         .run(tauri::generate_context!())
         .expect("error while running screenshot-memory");

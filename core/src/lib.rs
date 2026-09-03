@@ -12,6 +12,7 @@
 //! - [`thumbnails`]: thumbnail generation and on-disk cache layout
 //! - [`scanner`]: resumable, non-destructive directory scanner
 //! - [`insights`]: timeline buckets and duplicate-group queries
+//! - [`classify`]: heuristic app/site/category enrichment
 //!
 //! Core invariants:
 //! - The scanner only ever READS user files. No file mutation happens here.
@@ -19,6 +20,7 @@
 //! - Scans are resumable: fingerprinted records make re-scans cheap and safe.
 
 pub mod db;
+pub mod classify;
 pub mod error;
 pub mod hashing;
 pub mod insights;

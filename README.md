@@ -6,7 +6,7 @@ A local-first, cross-platform (Windows / Linux / macOS) desktop application that
 turns your existing screenshot collection into a searchable personal visual
 memory — without moving, renaming, or modifying a single file.
 
-## Status — Sprint 4 of 5 (review the past)
+## Status — 1.0 ready
 
 Working today:
 
@@ -49,9 +49,23 @@ Working today:
   plus perceptual clusters (dHash Hamming distance, adjustable threshold) for
   review and bulk organization — star all, tag all, collect all. Files are
   never touched; deletion stays a deliberate act outside the app.
+- **Auto-enrichment** (Sprint 5): heuristic app / website / category guesses
+  from filenames, paths, and OCR text — applied automatically after scans and
+  OCR passes, re-runnable from Settings, never overwriting manual values.
+- **System tray** (Sprint 5): Show Library, Scan now, and Quit, plus
+  left-click to focus the window.
+- **Settings** (Sprint 5): watched-folder management, OCR on/off, Enrich now,
+  index-health (per-file problems), and the local data location.
 
-Coming in Sprint 5: auto-classification (app/domain/category), system tray,
-packaging.
+## Installing
+
+- **From source**: follow Development below, then `npm run tauri build` —
+  bundles land in `src-tauri/target/release/bundle/` (`.deb`/`.AppImage` on
+  Linux, NSIS installer on Windows, `.dmg` on macOS).
+- **Prerequisites**: Rust (stable), Node 20+. On Linux, the Tauri system
+  packages (`libwebkit2gtk-4.1-dev`, `libgtk-3-dev`,
+  `libayatana-appindicator3-dev` for the tray, `librsvg2-dev`, `patchelf`).
+  OCR needs the `tesseract` binary on PATH.
 
 ## Architecture
 
@@ -81,9 +95,9 @@ packaging.
 
 ## Development
 
-Prerequisites: Rust (stable), Node 20+, and on Linux the usual Tauri system
-packages (`libwebkit2gtk-4.1-dev` etc.). OCR needs the `tesseract` binary on
-PATH (`tesseract-ocr` on Debian/Ubuntu, `brew install tesseract` on macOS) —
+Prerequisites: Rust (stable), Node 20+, and on Linux the Tauri system packages
+(see Installing above). OCR needs the `tesseract` binary on PATH
+(`tesseract-ocr` on Debian/Ubuntu, `brew install tesseract` on macOS) —
 without it, everything else still works and text extraction simply stays
 disabled.
 
