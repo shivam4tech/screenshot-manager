@@ -480,14 +480,25 @@ export default function Library({
 
       <div className="library">
         <header className="library-header">
-          <input
-            className="search-input"
-            type="search"
-            placeholder={SEARCH_HINT}
-            aria-label="Search screenshots"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
+          <div className="header-row">
+            <input
+              className="search-input"
+              type="search"
+              placeholder={SEARCH_HINT}
+              aria-label="Search screenshots"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            {!inSpecial && gridRows.length > 0 && (
+              <button
+                className="cull-btn"
+                onClick={() => setCulling(true)}
+                title="Keyboard triage: → keep, x trash, u undo"
+              >
+                ⌨ Cull
+              </button>
+            )}
+          </div>
           {inSearch ? (
             <div className="search-meta" role="status">
               {searching ? (
@@ -519,18 +530,6 @@ export default function Library({
             )
           )}
         </header>
-
-        {!inSpecial && !searchError && gridRows.length > 0 && (
-          <div className="view-toolbar">
-            <button
-              className="link-btn"
-              onClick={() => setCulling(true)}
-              title="Keyboard triage: → keep, x trash, u undo"
-            >
-              ⌨ Cull {gridRows.length} shots
-            </button>
-          </div>
-        )}
 
         {inSpecial ? (
           view.kind === "timeline" ? (

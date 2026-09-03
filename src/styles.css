@@ -281,6 +281,29 @@ input[type="checkbox"] {
 .search-input {
   width: 100%;
 }
+.header-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.header-row .search-input {
+  flex: 1;
+  min-width: 0;
+}
+.cull-btn {
+  flex-shrink: 0;
+  border-color: var(--accent);
+  color: var(--accent-strong);
+  font-weight: 600;
+  white-space: nowrap;
+}
+:root[data-theme="dark"] .cull-btn {
+  color: var(--accent);
+}
+.cull-btn:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
 
 .grid {
   display: grid;
