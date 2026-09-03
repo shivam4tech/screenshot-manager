@@ -247,7 +247,7 @@ pub struct CollectionInfo {
 /// Map the shared grid-row column list to a `ScreenshotRow`.
 /// Column order must match: id, path, filename, created_ts, width, height,
 /// format, status, ocr_status, content_hash, phash, starred.
-fn map_screenshot_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ScreenshotRow> {
+pub(crate) fn map_screenshot_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ScreenshotRow> {
     Ok(ScreenshotRow {
         id: r.get(0)?,
         path: r.get(1)?,

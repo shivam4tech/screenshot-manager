@@ -11,6 +11,7 @@
 //! - [`metadata`]: cheap image metadata extraction (dimensions, format)
 //! - [`thumbnails`]: thumbnail generation and on-disk cache layout
 //! - [`scanner`]: resumable, non-destructive directory scanner
+//! - [`insights`]: timeline buckets and duplicate-group queries
 //!
 //! Core invariants:
 //! - The scanner only ever READS user files. No file mutation happens here.
@@ -20,6 +21,7 @@
 pub mod db;
 pub mod error;
 pub mod hashing;
+pub mod insights;
 pub mod metadata;
 pub mod ocr;
 pub mod platform;

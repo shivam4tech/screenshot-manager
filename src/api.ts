@@ -145,6 +145,24 @@ export interface CollectionInfo {
   created_at: string;
 }
 
+export interface TimelineMonth {
+  year: number;
+  month: number;
+  key: string;
+  count: number;
+}
+
+export interface TimelineDay {
+  date: string;
+  count: number;
+}
+
+export interface DuplicateGroup {
+  kind: string;
+  key: string;
+  items: ScreenshotRow[];
+}
+
 export const api = {
   getAppState: () => invoke<AppStateDto>("get_app_state"),
   getDefaultDirectories: () => invoke<string[]>("get_default_directories"),
@@ -196,6 +214,15 @@ export const api = {
     }),
   listScreenshotCollections: (id: number) =>
     invoke<CollectionInfo[]>("list_screenshot_collections", { id }),
+  timelineMonths: () => invoke<TimelineMonth[]>("timeline_months"),
+  timelineDays: (year: number, month: number) =>
+    invoke<TimelineDay[]>("timeline_days", { year, month }),
+  timelineItems: (date: string, limit: number, offset: number) =>
+    invoke<ScreenshotRow[]>("timeline_items", { date, limit, offset }),
+  exactDuplicateGroups: () =>
+    invoke<DuplicateGroup[]>("exact_duplicate_groups"),
+  similarGroups: (maxDistance: number) =>
+    invoke<DuplicateGroup[]>("similar_groups", { maxDistance }),
 };
 
 /** Resolve a cached thumbnail to a loadable asset URL. */

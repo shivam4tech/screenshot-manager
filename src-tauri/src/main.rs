@@ -102,6 +102,11 @@ fn main() {
             commands::remove_from_collection,
             commands::list_collection_items,
             commands::list_screenshot_collections,
+            commands::timeline_months,
+            commands::timeline_days,
+            commands::timeline_items,
+            commands::exact_duplicate_groups,
+            commands::similar_groups,
         ])
         .run(tauri::generate_context!())
         .expect("error while running screenshot-memory");

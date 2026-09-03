@@ -9,6 +9,8 @@ import {
   type TagInfo,
 } from "../api";
 import Detail from "./Detail";
+import Timeline from "./Timeline";
+import Duplicates from "./Duplicates";
 
 const PAGE_SIZE = 60;
 const SEARCH_PAGE_SIZE = 60;
@@ -16,7 +18,9 @@ const SEARCH_DEBOUNCE_MS = 250;
 
 type View =
   | { kind: "all" }
-  | { kind: "collection"; id: number; name: string };
+  | { kind: "collection"; id: number; name: string }
+  | { kind: "timeline" }
+  | { kind: "duplicates" };
 
 /** Render a snippet with [match] marks as bold nodes. */
 function Snippet({ text }: { text: string }) {
@@ -156,6 +160,8 @@ export default function Library({ appState }: { appState: AppStateDto | null }) 
 
   const inSearch = activeQuery.length > 0;
   const inCollection = !inSearch && view.kind === "collection";
+  const inSpecial =
+    !inSearch && (view.kind === "timeline" || view.kind === "duplicates");
 
   const selectCollection = (c: CollectionInfo) => {
     setQuery("");
@@ -254,6 +260,26 @@ export default function Library({ appState }: { appState: AppStateDto | null }) 
             title="Search is:starred"
           >
             ★ Starred
+          </button>
+          <button
+            className={`side-item${view.kind === "timeline" && !inSearch ? " active" : ""}`}
+            onClick={() => {
+              setQuery("");
+              setView({ kind: "timeline" });
+            }}
+            title="Browse by capture date"
+          >
+            ◷ Timeline
+          </button>
+          <button
+            className={`side-item${view.kind === "duplicates" && !inSearch ? " active" : ""}`}
+            onClick={() => {
+              setQuery("");
+              setView({ kind: "duplicates" });
+            }}
+            title="Review exact and similar duplicates"
+          >
+            ⧉ Duplicates
           </button>
         </nav>
 
@@ -404,7 +430,13 @@ export default function Library({ appState }: { appState: AppStateDto | null }) 
           )}
         </header>
 
-        {searchError ? (
+        {inSpecial ? (
+          view.kind === "timeline" ? (
+            <Timeline onOpenDetail={(id) => setDetailId(id)} />
+          ) : (
+            <Duplicates onOpenDetail={(id) => setDetailId(id)} />
+          )
+        ) : searchError ? (
           <div className="empty-state">
             <h2>Search failed</h2>
             <p className="error">{searchError}</p>

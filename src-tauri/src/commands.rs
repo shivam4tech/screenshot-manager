@@ -11,6 +11,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use shotmemory_core::db::{CollectionInfo, Database, LibraryStats, ScreenshotDetail, ScreenshotRow, TagInfo};
+use shotmemory_core::insights::{DuplicateGroup, TimelineDay, TimelineMonth};
 use shotmemory_core::ocr::{OcrConfig, OcrPipeline, OcrProgress, OcrSummary, TesseractEngine};
 use shotmemory_core::platform;
 use shotmemory_core::scanner::{ScanProgress, ScanSummary, Scanner};
@@ -419,6 +420,58 @@ pub fn list_screenshot_collections(
 ) -> Result<Vec<CollectionInfo>, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     db.screenshot_collections(id).map_err(|e| e.to_string())
+}
+
+// ---- Timeline & duplicates ----------------------------------------------------
+// Read-only review surfaces (Sprint 4). Groups are for bulk organization —
+// tagging, starring, collecting — never file deletion.
+
+/// Months containing screenshots, newest first.
+#[tauri::command]
+pub fn timeline_months(state: State<AppState>) -> Result<Vec<TimelineMonth>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    shotmemory_core::insights::timeline_months(&db).map_err(|e| e.to_string())
+}
+
+/// Day buckets within one month (1-12).
+#[tauri::command]
+pub fn timeline_days(
+    state: State<AppState>,
+    year: i32,
+    month: u32,
+) -> Result<Vec<TimelineDay>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    shotmemory_core::insights::timeline_days(&db, year, month).map_err(|e| e.to_string())
+}
+
+/// Items captured on one local day ("YYYY-MM-DD"), newest first.
+#[tauri::command]
+pub fn timeline_items(
+    state: State<AppState>,
+    date: String,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<ScreenshotRow>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    shotmemory_core::insights::timeline_items(&db, &date, limit, offset)
+        .map_err(|e| e.to_string())
+}
+
+/// Byte-identical groups (shared content hash), largest first.
+#[tauri::command]
+pub fn exact_duplicate_groups(state: State<AppState>) -> Result<Vec<DuplicateGroup>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    shotmemory_core::insights::exact_duplicate_groups(&db).map_err(|e| e.to_string())
+}
+
+/// Perceptual clusters within `max_distance` Hamming bits (clamped 0-16).
+#[tauri::command]
+pub fn similar_groups(
+    state: State<AppState>,
+    max_distance: u32,
+) -> Result<Vec<DuplicateGroup>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    shotmemory_core::insights::similar_groups(&db, max_distance).map_err(|e| e.to_string())
 }
 
 // ---- OCR ---------------------------------------------------------------------

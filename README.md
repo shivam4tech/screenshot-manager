@@ -6,7 +6,7 @@ A local-first, cross-platform (Windows / Linux / macOS) desktop application that
 turns your existing screenshot collection into a searchable personal visual
 memory — without moving, renaming, or modifying a single file.
 
-## Status — Sprint 3 of 5 (get organized)
+## Status — Sprint 4 of 5 (review the past)
 
 Working today:
 
@@ -43,9 +43,15 @@ Working today:
   `collection:name`.
 - **Flags & notes** (Sprint 3): star/unstar (sidebar entry + `is:starred` /
   `is:unstarred` filters), read-later flag, and a searchable free-text note.
+- **Timeline** (Sprint 4): month → day → shots drill-down over capture dates
+  (local time), with counts at every level.
+- **Duplicate review** (Sprint 4): byte-identical groups (shared content hash)
+  plus perceptual clusters (dHash Hamming distance, adjustable threshold) for
+  review and bulk organization — star all, tag all, collect all. Files are
+  never touched; deletion stays a deliberate act outside the app.
 
-Coming in later sprints: timeline, duplicate manager, auto-classification
-(app/domain/category), system tray, packaging.
+Coming in Sprint 5: auto-classification (app/domain/category), system tray,
+packaging.
 
 ## Architecture
 
