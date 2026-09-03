@@ -790,6 +790,22 @@ impl Database {
             .optional()?)
     }
 
+    /// One on-disk path for a content hash (any available record; duplicates
+    /// share bytes so any copy decodes identically). Used to (re)generate
+    /// thumbnails on demand for sizes the scanner didn't pre-render.
+    pub fn path_by_content_hash(&self, content_hash: &str) -> CoreResult<Option<String>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT path FROM screenshots
+                 WHERE content_hash = ?1 AND status = 'available'
+                 ORDER BY id LIMIT 1",
+                params![content_hash],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
     pub fn set_setting(&self, key: &str, value: &str) -> CoreResult<()> {
         self.conn.execute(
             "INSERT INTO settings(key, value) VALUES (?1, ?2)
@@ -1454,6 +1470,23 @@ mod tests {
             "/tmp/b/c.png"
         );
         assert!(normalize_path(Path::new("relative.png")).starts_with('/'));
+    }
+
+    #[test]
+    fn path_by_content_hash_finds_available_record() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_screenshot(&NewScreenshot {
+            path: "/tmp/shot.png".into(),
+            filename: "shot.png".into(),
+            content_hash: Some("abc123".into()),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(
+            db.path_by_content_hash("abc123").unwrap().as_deref(),
+            Some("/tmp/shot.png")
+        );
+        assert_eq!(db.path_by_content_hash("nope").unwrap(), None);
     }
 
     fn organize_fixture() -> (Database, i64) {

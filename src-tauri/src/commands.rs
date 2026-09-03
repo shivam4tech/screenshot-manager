@@ -258,6 +258,10 @@ pub fn list_screenshots(
 
 /// Resolve the cached thumbnail path for a screenshot's content hash.
 /// The frontend loads it through the asset protocol (no pixel work in JS).
+///
+/// Sizes the scanner didn't pre-render (e.g. the 1024px detail view) are
+/// generated on demand from the original file and cached for next time.
+/// Anything still unresolvable yields None so the UI shows a placeholder.
 #[tauri::command]
 pub fn get_thumbnail_path(
     state: State<AppState>,
@@ -266,9 +270,28 @@ pub fn get_thumbnail_path(
 ) -> Result<Option<String>, String> {
     let p = shotmemory_core::thumbnails::cache_path(&state.thumb_cache, &content_hash, size);
     if p.exists() {
-        Ok(Some(p.to_string_lossy().into_owned()))
-    } else {
-        Ok(None)
+        return Ok(Some(p.to_string_lossy().into_owned()));
+    }
+    // Cache miss: find any available file with these bytes and render it.
+    let source: Option<String> = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        db.path_by_content_hash(&content_hash)
+            .map_err(|e| e.to_string())?
+    };
+    let Some(source) = source else {
+        return Ok(None);
+    };
+    match shotmemory_core::thumbnails::generate_thumbnail(
+        std::path::Path::new(&source),
+        &content_hash,
+        size,
+        &state.thumb_cache,
+    ) {
+        Ok(rendered) => Ok(Some(rendered.to_string_lossy().into_owned())),
+        Err(e) => {
+            log::warn!("on-demand thumbnail for {content_hash} failed: {e}");
+            Ok(None)
+        }
     }
 }
 
