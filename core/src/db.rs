@@ -577,6 +577,20 @@ impl Database {
         )?)
     }
 
+    /// Mark records available again (e.g. after restoring from the trash).
+    /// Only missing records flip; anything else is left untouched.
+    pub fn mark_available(&self, ids: &[i64]) -> CoreResult<usize> {
+        let mut n = 0;
+        for id in ids {
+            n += self.conn.execute(
+                "UPDATE screenshots SET status = 'available'
+                 WHERE id = ?1 AND status = 'missing'",
+                params![id],
+            )?;
+        }
+        Ok(n)
+    }
+
     /// Hash-based identity: if a file with this content hash was previously
     /// marked missing (renamed/moved/restored), re-point that record to its
     /// new location instead of creating a duplicate record. Existing OCR

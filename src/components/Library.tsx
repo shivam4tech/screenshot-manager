@@ -13,6 +13,7 @@ import Timeline from "./Timeline";
 import Duplicates from "./Duplicates";
 import Settings from "./Settings";
 import Bursts from "./Bursts";
+import Cull from "./Cull";
 import { BulkBar, useSelection } from "./bulk";
 import { useInfiniteLoader } from "./scroll";
 import type { Theme } from "../theme";
@@ -80,6 +81,7 @@ export default function Library({
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [detailId, setDetailId] = useState<number | null>(null);
+  const [culling, setCulling] = useState(false);
 
   // Organize state (Sprint 3)
   const [view, setView] = useState<View>({ kind: "all" });
@@ -518,6 +520,18 @@ export default function Library({
           )}
         </header>
 
+        {!inSpecial && !searchError && gridRows.length > 0 && (
+          <div className="view-toolbar">
+            <button
+              className="link-btn"
+              onClick={() => setCulling(true)}
+              title="Keyboard triage: → keep, x trash, u undo"
+            >
+              ⌨ Cull {gridRows.length} shots
+            </button>
+          </div>
+        )}
+
         {inSpecial ? (
           view.kind === "timeline" ? (
             <Timeline onOpenDetail={(id) => setDetailId(id)} />
@@ -675,6 +689,16 @@ export default function Library({
             id={detailId}
             onClose={() => setDetailId(null)}
             onChanged={refreshAfterChange}
+          />
+        )}
+
+        {culling && (
+          <Cull
+            items={gridRows}
+            onDone={(trashedIds) => {
+              setCulling(false);
+              afterBulk(trashedIds);
+            }}
           />
         )}
       </div>

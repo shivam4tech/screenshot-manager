@@ -108,6 +108,7 @@ fn main() {
             commands::list_screenshot_collections,
             commands::add_many_to_collection,
             commands::delete_screenshots,
+            commands::restore_screenshots,
             commands::timeline_months,
             commands::timeline_days,
             commands::timeline_items,

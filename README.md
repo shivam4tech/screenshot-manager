@@ -71,6 +71,10 @@ Working today:
   you pick), with readable native controls in both.
 - **Infinite scroll**: grids keep loading as you scroll; loaded pages stay
   for the session.
+- **Cull mode**: full-screen keyboard triage for any grid, collection, or
+  burst — →/space keeps, x trashes the actual file (OS trash, recoverable),
+  u undoes by restoring from the trash, Esc finishes. No per-item confirms
+  to slow you down; the session undo has your back.
 
 ## Installing
 

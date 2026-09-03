@@ -8,6 +8,7 @@ import {
 } from "../api";
 import { BulkBar, useSelection } from "./bulk";
 import { useInfiniteLoader } from "./scroll";
+import Cull from "./Cull";
 
 const PAGE_SIZE = 60;
 const GAP_OPTIONS = [
@@ -52,6 +53,7 @@ export default function Bursts({
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [culling, setCulling] = useState(false);
   const sel = useSelection();
 
   const resolveThumbs = useCallback(
@@ -149,6 +151,11 @@ export default function Bursts({
     reload();
   };
 
+  const afterCull = (trashedIds: number[]) => {
+    setCulling(false);
+    afterBulk(trashedIds);
+  };
+
   return (
     <div className="bursts">
       <div className="dup-toolbar">
@@ -222,6 +229,13 @@ export default function Bursts({
                     />{" "}
                     Select all in burst
                   </label>
+                  <button
+                    className="link-btn"
+                    onClick={() => setCulling(true)}
+                    title="Keyboard triage this burst: → keep, x trash, u undo"
+                  >
+                    ⌨ Cull burst
+                  </button>
                 </div>
                 <div className="grid">
                   {items.map((r) => (
@@ -269,6 +283,7 @@ export default function Bursts({
                 <div ref={sentinel} className="scroll-sentinel" aria-hidden="true">
                   {loading ? "Loading…" : hasMore ? "" : items.length > 0 ? "End." : ""}
                 </div>
+                {culling && <Cull items={items} onDone={afterCull} />}
               </>
             )}
           </div>

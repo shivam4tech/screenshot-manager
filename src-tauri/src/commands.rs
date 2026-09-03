@@ -486,6 +486,17 @@ pub fn delete_screenshots(
     shotmemory_core::cleanup::delete_screenshots(&db, &ids).map_err(|e| e.to_string())
 }
 
+/// Recover screenshots from the OS trash (cull undo). Records flip back to
+/// available; files missing from the trash are reported.
+#[tauri::command]
+pub fn restore_screenshots(
+    state: State<AppState>,
+    ids: Vec<i64>,
+) -> Result<shotmemory_core::cleanup::RestoreSummary, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    shotmemory_core::cleanup::restore_screenshots(&db, &ids).map_err(|e| e.to_string())
+}
+
 /// Path to the local data directory (database + thumbnails) for About.
 /// Shown so users know exactly where their data lives.
 #[tauri::command]

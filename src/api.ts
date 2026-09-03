@@ -186,6 +186,18 @@ export interface DeleteSummary {
   failed: DeleteFailure[];
 }
 
+export interface RestoreFailure {
+  id: number;
+  path: string | null;
+  message: string;
+}
+
+export interface RestoreSummary {
+  restored: number;
+  already_there: number;
+  failed: RestoreFailure[];
+}
+
 export interface Problem {
   id: number;
   path: string | null;
@@ -254,6 +266,8 @@ export const api = {
     invoke<number>("add_many_to_collection", { collectionId, screenshotIds }),
   deleteScreenshots: (ids: number[]) =>
     invoke<DeleteSummary>("delete_screenshots", { ids }),
+  restoreScreenshots: (ids: number[]) =>
+    invoke<RestoreSummary>("restore_screenshots", { ids }),
   timelineMonths: () => invoke<TimelineMonth[]>("timeline_months"),
   timelineDays: (year: number, month: number) =>
     invoke<TimelineDay[]>("timeline_days", { year, month }),

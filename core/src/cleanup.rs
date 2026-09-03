@@ -29,7 +29,6 @@ pub struct DeleteSummary {
     /// Ids that could not be processed, with reasons.
     pub failed: Vec<DeleteFailure>,
 }
-
 /// Move the given screenshots to the OS trash and mark their records
 /// missing. Unknown ids and trash errors are reported, never fatal to the
 /// rest of the batch.
@@ -66,6 +65,97 @@ pub fn delete_screenshots(db: &Database, ids: &[i64]) -> CoreResult<DeleteSummar
                 id: *id,
                 path: Some(path),
                 message: format!("could not move to trash: {e}"),
+            }),
+        }
+    }
+    Ok(summary)
+}
+
+/// One record that could not be restored.
+#[derive(Debug, Clone, Serialize)]
+pub struct RestoreFailure {
+    pub id: i64,
+    pub path: Option<String>,
+    pub message: String,
+}
+
+/// Outcome of a restore request (cull undo).
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct RestoreSummary {
+    /// Files recovered from the OS trash (records available again).
+    pub restored: usize,
+    /// Records whose files were already back in place.
+    pub already_there: usize,
+    /// Ids that could not be recovered, with reasons.
+    pub failed: Vec<RestoreFailure>,
+}
+
+/// Recover screenshots from the OS trash back to their recorded paths and
+/// mark their records available. Used by cull undo. If the trash no longer
+/// holds a file (emptied externally), it is reported, not resurrected.
+pub fn restore_screenshots(db: &Database, ids: &[i64]) -> CoreResult<RestoreSummary> {
+    let mut summary = RestoreSummary::default();
+    for id in ids {
+        let row: Option<String> = db
+            .conn()
+            .query_row(
+                "SELECT path FROM screenshots WHERE id = ?1",
+                rusqlite::params![id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let Some(path) = row else {
+            summary.failed.push(RestoreFailure {
+                id: *id,
+                path: None,
+                message: "screenshot not found".into(),
+            });
+            continue;
+        };
+        if std::path::Path::new(&path).exists() {
+            db.mark_available(&[*id])?;
+            summary.already_there += 1;
+            continue;
+        }
+        let trash_items = match trash::os_limited::list() {
+            Ok(items) => items,
+            Err(e) => {
+                summary.failed.push(RestoreFailure {
+                    id: *id,
+                    path: Some(path),
+                    message: format!("could not read trash: {e}"),
+                });
+                continue;
+            }
+        };
+        // Newest deletion of this exact path wins (avoids twin restores).
+        let mut matches: Vec<_> = trash_items
+            .into_iter()
+            .filter(|t| t.original_path() == std::path::Path::new(&path))
+            .collect();
+        matches.sort_by_key(|t| std::cmp::Reverse(t.time_deleted));
+        let Some(item) = matches.into_iter().next() else {
+            summary.failed.push(RestoreFailure {
+                id: *id,
+                path: Some(path),
+                message: "no longer in trash (emptied?)".into(),
+            });
+            continue;
+        };
+        match trash::os_limited::restore_all(vec![item]) {
+            Ok(()) if std::path::Path::new(&path).exists() => {
+                db.mark_available(&[*id])?;
+                summary.restored += 1;
+            }
+            Ok(()) => summary.failed.push(RestoreFailure {
+                id: *id,
+                path: Some(path),
+                message: "restore reported success but file is missing".into(),
+            }),
+            Err(e) => summary.failed.push(RestoreFailure {
+                id: *id,
+                path: Some(path),
+                message: format!("restore failed: {e}"),
             }),
         }
     }
@@ -132,5 +222,38 @@ mod tests {
         let s = delete_screenshots(&db, &[id]).unwrap();
         assert_eq!(s.already_missing, 1);
         assert_eq!(s.trashed, 0);
+    }
+
+    #[test]
+    fn delete_then_restore_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("shots");
+        std::fs::create_dir_all(&src).unwrap();
+        paint_png(&src.join("r.png"));
+
+        let db = Database::open_in_memory().unwrap();
+        let id = db
+            .insert_screenshot(&NewScreenshot {
+                path: src.join("r.png").to_string_lossy().into_owned(),
+                filename: "r.png".into(),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let del = delete_screenshots(&db, &[id]).unwrap();
+        assert_eq!(del.trashed, 1);
+        assert!(!src.join("r.png").exists());
+
+        let res = restore_screenshots(&db, &[id, 4242]).unwrap();
+        assert_eq!(res.restored, 1);
+        assert_eq!(res.failed.len(), 1, "unknown id reported");
+        assert!(src.join("r.png").exists(), "file back in place");
+        let d = db.get_screenshot_detail(id).unwrap().unwrap();
+        assert_eq!(d.status, crate::db::STATUS_AVAILABLE);
+
+        // Restoring an already-present file is a no-op success.
+        let res = restore_screenshots(&db, &[id]).unwrap();
+        assert_eq!(res.already_there, 1);
+        assert_eq!(res.restored, 0);
     }
 }
