@@ -160,20 +160,18 @@ export default function Cull({
   }, [goNext, goPrev, trashCurrent, undoLast, finished, trashed.join(",")]);
 
   const cur = items[index];
-  const remaining = items.length - trashed.length;
 
   return (
     <div className="cull-backdrop" role="dialog" aria-modal="true" aria-label="Cull mode">
       <div className="cull-top">
-        <span className="muted">
+        <span className="muted cull-count">
           {finished
             ? `Reviewed all ${items.length}`
             : `${index + 1} / ${items.length}`}
-          {" · "}
+          <span className="cull-sep"> · </span>
           {trashed.length} trashed
-          {undoStack.length > 0 && " (u to undo)"}
         </span>
-        <button onClick={() => onDone(trashed)} aria-label="Finish culling">
+        <button className="cull-done" onClick={() => onDone(trashed)} aria-label="Finish culling">
           Done ✓
         </button>
       </div>
@@ -205,9 +203,9 @@ export default function Cull({
       </div>
 
       {!finished && (
-        <div className="cull-actions">
-          <button onClick={goPrev} disabled={busy} title="Previous (←)">
-            ← Keep
+        <div className="cull-actions" role="toolbar" aria-label="Cull actions">
+          <button className="cull-keep" onClick={goPrev} disabled={busy} title="Previous (←)">
+            <span aria-hidden="true">←</span> Keep
           </button>
           <button
             onClick={() => void trashCurrent()}
@@ -215,24 +213,24 @@ export default function Cull({
             className="danger"
             title="Trash this file — recoverable, u undoes (x)"
           >
-            {busy ? "…" : "✕ Trash (x)"}
+            {busy ? "…" : "Trash"}
           </button>
-          <button onClick={goNext} disabled={busy} title="Next (→)">
-            Keep →
+          <button className="cull-keep" onClick={goNext} disabled={busy} title="Next (→)">
+            Keep <span aria-hidden="true">→</span>
           </button>
           <button
+            className="cull-undo"
             onClick={() => void undoLast()}
             disabled={busy || undoStack.length === 0}
             title="Restore last trashed file (u)"
           >
-            Undo{remaining < items.length ? ` (${trashed.length})` : ""}
+            Undo
           </button>
         </div>
       )}
 
       <p className="cull-hints muted small">
-        →/space keep · x trash · u undo · esc done — trash goes to the OS trash,
-        records stay as missing
+        <kbd>←</kbd> <kbd>space</kbd> keep · <kbd>X</kbd> trash · <kbd>U</kbd> undo · <kbd>Esc</kbd> done
       </p>
     </div>
   );

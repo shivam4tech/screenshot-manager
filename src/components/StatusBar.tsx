@@ -81,9 +81,6 @@ export default function StatusBar({
 
   if (!stats) return <footer className="status-bar" />;
 
-  const attention =
-    stats.problem_count > 0 ? ` • ${stats.problem_count} need attention` : "";
-
   return (
     <footer className="status-bar">
       {appState?.indexing ? (
@@ -91,11 +88,13 @@ export default function StatusBar({
           <span className="dot dot-active" aria-hidden="true" /> Indexing…{" "}
           {stats.total.toLocaleString()} indexed
         </span>
-      ) : (
+      ) : stats.problem_count > 0 ? (
         <span>
-          <span className="dot" aria-hidden="true" />{" "}
-          {stats.total.toLocaleString()} screenshots indexed{attention}
+          <span className="dot dot-warn" aria-hidden="true" />{" "}
+          {stats.problem_count} need attention
         </span>
+      ) : (
+        <span />
       )}
 
       <span className="status-ocr">

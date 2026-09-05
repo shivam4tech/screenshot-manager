@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api, type CollectionInfo } from "../api";
+import { Dropdown } from "./ui";
 
 /** Selection state shared by every grid (library, bursts, timeline...). */
 export function useSelection() {
@@ -27,8 +28,9 @@ export function useSelection() {
 export type Selection = ReturnType<typeof useSelection>;
 
 /**
- * Floating bulk bar: collect (existing or new collection), tag, star, and
- * trash the current selection. `onDone(removedIds)` lets the parent drop
+ * Contextual selection toolbar: count, select-all, collect (existing or new
+ * collection), tag, star, trash, and cancel. Rendered above the grid only
+ * while selection mode is active. `onDone(removedIds)` lets the parent drop
  * deleted rows and refresh counts; `removedIds` is empty for non-deletes.
  */
 export function BulkBar({
@@ -36,11 +38,19 @@ export function BulkBar({
   collections,
   onDone,
   onError,
+  selectAllLabel,
+  selectingAll,
+  onSelectAll,
+  onCancel,
 }: {
   ids: number[];
   collections: CollectionInfo[];
   onDone: (removedIds: number[]) => void;
   onError: (msg: string) => void;
+  selectAllLabel: string;
+  selectingAll: boolean;
+  onSelectAll: () => void;
+  onCancel: () => void;
 }) {
   const [target, setTarget] = useState("");
   const [newName, setNewName] = useState("");
@@ -117,19 +127,19 @@ export function BulkBar({
   return (
     <div className="bulk-bar" role="toolbar" aria-label="Bulk actions">
       <span className="bulk-count">{ids.length} selected</span>
-      <select
+      <button className="btn btn-sm" disabled={busy || selectingAll} onClick={onSelectAll}>
+        {selectingAll ? "Selecting…" : selectAllLabel}
+      </button>
+      <span className="bulk-sep" aria-hidden="true" />
+      <Dropdown
         value={target}
+        active={false}
         disabled={busy}
-        onChange={(e) => setTarget(e.target.value)}
-        aria-label="Choose collection"
-      >
-        <option value="">Collect into…</option>
-        {collections.map((c) => (
-          <option key={c.id} value={c.id}>
-            {c.name} ({c.item_count})
-          </option>
-        ))}
-      </select>
+        ariaLabel="Choose collection"
+        placeholder="Collect into…"
+        options={collections.map((c) => ({ value: String(c.id), label: `${c.name} · ${c.item_count}` }))}
+        onChange={(v) => setTarget(v)}
+      />
       <span className="bulk-new-collection">
         <input
           type="text"
@@ -142,7 +152,7 @@ export function BulkBar({
             if (e.key === "Enter") void collect();
           }}
         />
-        <button disabled={busy} onClick={() => void collect()}>
+        <button className="btn btn-sm" disabled={busy} onClick={() => void collect()}>
           Add
         </button>
       </span>
@@ -158,20 +168,29 @@ export function BulkBar({
             if (e.key === "Enter") void tagAll();
           }}
         />
-        <button disabled={busy} onClick={() => void tagAll()}>
+        <button className="btn btn-sm" disabled={busy} onClick={() => void tagAll()}>
           Tag
         </button>
       </span>
-      <button disabled={busy} onClick={() => void starAll()} title="Star all selected">
-        ★
+      <button className="btn btn-sm" disabled={busy} onClick={() => void starAll()} title="Star all selected">
+        ★ Star
       </button>
       <button
         disabled={busy}
-        className="danger"
+        className="btn btn-sm btn-danger"
         onClick={trashAll}
         title="Move selected to trash"
       >
         Delete
+      </button>
+      <button
+        className="iconbtn"
+        disabled={busy}
+        onClick={onCancel}
+        title="Cancel selection"
+        aria-label="Cancel selection"
+      >
+        ✕
       </button>
       {note && (
         <span className="muted small" role="status">

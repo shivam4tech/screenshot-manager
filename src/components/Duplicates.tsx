@@ -5,6 +5,9 @@ import {
   type CollectionInfo,
   type DuplicateGroup,
 } from "../api";
+import { Icons } from "./icons";
+import { Button, Dropdown, EmptyState } from "./ui";
+import { displayName } from "./ScreenshotCard";
 
 const THRESHOLDS = [4, 8, 12];
 
@@ -23,6 +26,7 @@ export default function Duplicates({
   const [exact, setExact] = useState<DuplicateGroup[]>([]);
   const [similar, setSimilar] = useState<DuplicateGroup[]>([]);
   const [threshold, setThreshold] = useState(8);
+  const [tab, setTab] = useState<"exact" | "similar">("exact");
   const [collections, setCollections] = useState<CollectionInfo[]>([]);
   const [thumbs, setThumbs] = useState<Map<number, string>>(new Map());
   const [tagDrafts, setTagDrafts] = useState<Record<string, string>>({});
@@ -109,15 +113,61 @@ export default function Duplicates({
   const renderGroup = (g: DuplicateGroup, gi: number) => {
     const key = `${g.kind}:${gi}`;
     const draft = tagDrafts[key] ?? "";
+    const isExact = g.kind === "exact";
     return (
       <section className="dup-group" key={key}>
         <header className="dup-head">
-          <span className={`dup-kind dup-${g.kind}`}>
-            {g.kind === "exact" ? "Exact" : "Similar"}
+          <span className="dup-head-main">
+            <span className={`dup-kind dup-${g.kind}`}>
+              {isExact ? "Exact match" : "Similar"}
+            </span>
+            <span className="muted small">
+              {g.items.length} screenshots ·{" "}
+              <span className="mono">{g.key.slice(0, 12)}…</span>
+            </span>
           </span>
-          <span className="muted small">
-            {g.items.length} shots ·{" "}
-            <span className="mono">{g.key.slice(0, 12)}…</span>
+          <span className="dup-head-actions">
+            {g.items.length > 1 && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => trashGroupExceptNewest(g)}
+                title="Trash every copy but the newest (recoverable via OS trash)"
+              >
+                Keep newest only
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant="ghost"
+              icon="star"
+              onClick={() =>
+                bulk(`Starred ${g.items.length} shots.`, () =>
+                  Promise.all(g.items.map((r) => api.setStarred(r.id, true))).then(() => {})
+                )
+              }
+            >
+              Star all
+            </Button>
+            {collections.length > 0 && (
+              <Dropdown
+                value=""
+                active={false}
+                ariaLabel="Add whole group to collection"
+                placeholder="+ Collect"
+                options={collections.map((c) => ({ value: String(c.id), label: c.name }))}
+                onChange={(v) => {
+                  const cid = Number(v);
+                  if (!cid) return;
+                  const name = collections.find((c) => c.id === cid)?.name ?? "";
+                  void bulk(`Added ${g.items.length} shots to “${name}”.`, () =>
+                    Promise.all(
+                      g.items.map((r) => api.addToCollection(cid, r.id))
+                    ).then(() => {})
+                  );
+                }}
+              />
+            )}
           </span>
         </header>
         <div className="dup-items">
@@ -151,34 +201,15 @@ export default function Duplicates({
                   ✕
                 </button>
               </div>
-              <figcaption>{r.filename}</figcaption>
+              <figcaption>{displayName(r.filename)}</figcaption>
             </figure>
           ))}
         </div>
         <div className="dup-actions">
-          <button
-            className="link-btn"
-            onClick={() =>
-              bulk(`Starred ${g.items.length} shots.`, () =>
-                Promise.all(g.items.map((r) => api.setStarred(r.id, true))).then(() => {})
-              )
-            }
-          >
-            ★ Star all
-          </button>
-          {g.items.length > 1 && (
-            <button
-              className="link-btn danger-text"
-              onClick={() => trashGroupExceptNewest(g)}
-              title="Trash every copy but the newest (recoverable via OS trash)"
-            >
-              Keep newest only
-            </button>
-          )}
           <span className="dup-tag-add">
             <input
               type="text"
-              placeholder="tag all…"
+              placeholder="+ Tag all…"
               aria-label="Tag whole group"
               value={draft}
               onChange={(e) =>
@@ -194,54 +225,56 @@ export default function Duplicates({
               }}
             />
           </span>
-          {collections.length > 0 && (
-            <select
-              className="dup-collect"
-              defaultValue=""
-              aria-label="Add whole group to collection"
-              onChange={(e) => {
-                const cid = Number(e.target.value);
-                e.target.value = "";
-                if (!cid) return;
-                const name = collections.find((c) => c.id === cid)?.name ?? "";
-                void bulk(`Added ${g.items.length} shots to “${name}”.`, () =>
-                  Promise.all(
-                    g.items.map((r) => api.addToCollection(cid, r.id))
-                  ).then(() => {})
-                );
-              }}
+          {g.items.length > 1 && (
+            <button
+              className="link-btn danger-text"
+              onClick={() => trashGroupExceptNewest(g)}
+              title="Trash every copy but the newest (recoverable via OS trash)"
             >
-              <option value="">+ collect all…</option>
-              {collections.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
+              <Icons.trash size={12} /> Move duplicates to trash
+            </button>
           )}
         </div>
       </section>
     );
   };
 
+  const groups = tab === "exact" ? exact : similar;
+
   return (
     <div className="duplicates">
+      <div className="page-head">
+        <div>
+          <h1 className="page-title">Duplicate review</h1>
+          <p className="page-sub">Find and manage similar screenshots</p>
+        </div>
+      </div>
       <div className="dup-toolbar">
-        <h3 className="dup-title">Duplicate review</h3>
-        <label className="muted small">
-          Similarity{" "}
-          <select
-            value={threshold}
-            onChange={(e) => setThreshold(Number(e.target.value))}
-            aria-label="Similarity threshold"
+        <div className="dup-tabs" role="tablist" aria-label="Duplicate kinds">
+          <button
+            role="tab"
+            aria-selected={tab === "exact"}
+            className={`dup-tab${tab === "exact" ? " on" : ""}`}
+            onClick={() => setTab("exact")}
           >
-            {THRESHOLDS.map((t) => (
-              <option key={t} value={t}>
-                ≤ {t} bits
-              </option>
-            ))}
-          </select>
-        </label>
+            Exact duplicates <span className="side-count">{exact.length}</span>
+          </button>
+          <button
+            role="tab"
+            aria-selected={tab === "similar"}
+            className={`dup-tab${tab === "similar" ? " on" : ""}`}
+            onClick={() => setTab("similar")}
+          >
+            Similar <span className="side-count">{similar.length}</span>
+          </button>
+        </div>
+        <Dropdown
+          ariaLabel="Similarity threshold"
+          prefix="Similarity:"
+          value={String(threshold)}
+          onChange={(v) => setThreshold(Number(v))}
+          options={THRESHOLDS.map((t) => ({ value: String(t), label: `≤ ${t} bits` }))}
+        />
       </div>
       {note && (
         <p className="muted small" role="status">
@@ -252,31 +285,19 @@ export default function Duplicates({
       {loading ? (
         <p className="muted">Scanning for duplicates…</p>
       ) : exact.length === 0 && similar.length === 0 ? (
-        <div className="empty-state">
-          <h2>No duplicates found.</h2>
-          <p>Byte-identical and visually similar shots will group here.</p>
-        </div>
+        <EmptyState
+          title="No duplicate screenshots detected"
+          body="Byte-identical and visually similar shots will group here."
+        />
+      ) : groups.length === 0 ? (
+        <EmptyState
+          title={tab === "exact" ? "No exact duplicates" : "No similar shots"}
+          body={tab === "exact"
+            ? "No byte-identical screenshots found."
+            : "Try raising the similarity threshold."}
+        />
       ) : (
-        <>
-          {exact.length > 0 && (
-            <>
-              <h4>
-                Exact duplicates{" "}
-                <span className="side-count">{exact.length} groups</span>
-              </h4>
-              {exact.map((g, i) => renderGroup(g, i))}
-            </>
-          )}
-          {similar.length > 0 && (
-            <>
-              <h4>
-                Similar shots{" "}
-                <span className="side-count">{similar.length} groups</span>
-              </h4>
-              {similar.map((g, i) => renderGroup(g, i + exact.length))}
-            </>
-          )}
-        </>
+        groups.map((g, i) => renderGroup(g, tab === "exact" ? i : i + exact.length))
       )}
     </div>
   );

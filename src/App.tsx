@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type AppStateDto } from "./api";
-import { applyTheme, initialTheme, type Theme } from "./theme";
+import { applyTheme, getCustomHex, initialAccent, initialTheme, syncAccent, type Accent, type Theme } from "./theme";
 import Onboarding from "./components/Onboarding";
 import Library from "./components/Library";
 import StatusBar from "./components/StatusBar";
@@ -12,10 +12,16 @@ export default function App() {
   const [appState, setAppState] = useState<AppStateDto | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [theme, setTheme] = useState<Theme>(initialTheme);
+  const [accent, setAccent] = useState<Accent>(initialAccent);
+  const [customHex, setCustomHex] = useState<string>(getCustomHex);
 
   useEffect(() => {
     applyTheme(theme);
   }, [theme]);
+
+  useEffect(() => {
+    syncAccent(accent, customHex, theme);
+  }, [accent, customHex, theme]);
 
   const refresh = async () => {
     try {
@@ -67,6 +73,13 @@ export default function App() {
           appState={appState}
           theme={theme}
           onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+          accent={accent}
+          onAccentChange={setAccent}
+          customHex={customHex}
+          onCustomAccent={(hex) => {
+            setCustomHex(hex);
+            setAccent("custom");
+          }}
         />
       </div>
       <StatusBar appState={appState} onRefresh={refresh} />

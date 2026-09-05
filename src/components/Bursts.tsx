@@ -8,6 +8,9 @@ import {
 } from "../api";
 import { BulkBar, useSelection } from "./bulk";
 import { useInfiniteLoader } from "./scroll";
+import { Icons } from "./icons";
+import { Button, Dropdown } from "./ui";
+import { ScreenshotCard } from "./ScreenshotCard";
 import Cull from "./Cull";
 
 const PAGE_SIZE = 60;
@@ -55,7 +58,17 @@ export default function Bursts({
   const [error, setError] = useState<string | null>(null);
   const [culling, setCulling] = useState(false);
   const [selectingAll, setSelectingAll] = useState(false);
+  const [selectMode, setSelectMode] = useState(false);
   const sel = useSelection();
+
+  const toggleSel = (id: number) => {
+    sel.toggle(id);
+    setSelectMode(true);
+  };
+  const exitSelectMode = () => {
+    sel.clear();
+    setSelectMode(false);
+  };
 
   const resolveThumbs = useCallback(
     async (rows: { id: number; content_hash: string | null }[]) => {
@@ -106,11 +119,13 @@ export default function Bursts({
       setOpenKey(null);
       setItems([]);
       sel.clear();
+      setSelectMode(false);
       return;
     }
     setOpenKey(b.key);
     setItems([]);
     sel.clear();
+    setSelectMode(false);
     setError(null);
     setLoading(true);
     api
@@ -173,22 +188,33 @@ export default function Bursts({
 
   return (
     <div className="bursts">
+      <div className="page-head">
+        <div>
+          <h1 className="page-title">Bursts</h1>
+          <p className="page-sub">Grouped screenshots taken in quick succession</p>
+        </div>
+      </div>
       <div className="dup-toolbar">
-        <h3 className="dup-title">Bursts</h3>
-        <label className="muted small">
-          Split after{" "}
-          <select
-            value={gap}
-            onChange={(e) => setGap(Number(e.target.value))}
-            aria-label="Burst gap"
+        <span className="muted small">
+          {bursts.length} session{bursts.length === 1 ? "" : "s"}
+        </span>
+        <span className="toolbar-group">
+          <Button
+            size="sm"
+            variant={selectMode ? "secondary" : "ghost"}
+            onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
+            title="Select screenshots for bulk actions"
           >
-            {GAP_OPTIONS.map((g) => (
-              <option key={g.secs} value={g.secs}>
-                {g.label}
-              </option>
-            ))}
-          </select>
-        </label>
+            {selectMode ? "Cancel" : "Select"}
+          </Button>
+          <Dropdown
+            ariaLabel="Burst gap"
+            prefix="Split after:"
+            value={String(gap)}
+            onChange={(v) => setGap(Number(v))}
+            options={GAP_OPTIONS.map((g) => ({ value: String(g.secs), label: g.label }))}
+          />
+        </span>
       </div>
       {error && <p className="error">{error}</p>}
       {bursts.length === 0 && !error ? (
@@ -228,102 +254,55 @@ export default function Bursts({
                 </span>
               </span>
               <span className="burst-count">{b.count} shots</span>
+              <span className="burst-arrow" aria-hidden="true"><Icons.chevronR size={16} /></span>
             </button>
             {openKey === b.key && (
-              <>
-                <div className="select-all-row">
-                  <label className="muted small">
-                    <input
-                      type="checkbox"
-                      checked={items.length > 0 && items.every((r) => sel.selected.has(r.id))}
-                      onChange={(e) =>
-                        e.target.checked
-                          ? sel.selectAll(items.map((r) => r.id))
-                          : sel.clear()
-                      }
-                    />{" "}
-                    Select shown ({items.length})
-                  </label>
-                  {openB && openB.count > items.length && (
-                    <button
-                      className="link-btn"
-                      disabled={selectingAll}
-                      onClick={() => void selectAllInBurst()}
-                      title="Select the whole burst, not just what's loaded"
-                    >
-                      {selectingAll
-                        ? "Selecting…"
-                        : `Select all ${openB.count} in burst`}
-                    </button>
-                  )}
-                  {sel.selected.size > 0 && (
-                    <span className="muted small">
-                      {sel.selected.size.toLocaleString()} selected
-                    </span>
-                  )}
+              <div className="burst-open">
+                <div className="burst-open-bar">
                   <button
                     className="link-btn"
                     onClick={() => setCulling(true)}
                     title="Keyboard triage this burst: → keep, x trash, u undo"
                   >
-                    ⌨ Cull burst
+                    Cull burst
                   </button>
                 </div>
-                <div className="grid">
-                  {items.map((r) => (
-                    <figure
-                      key={r.id}
-                      className={`cell clickable${sel.selected.has(r.id) ? " selected" : ""}`}
-                      title={r.filename}
-                      onClick={() => onOpenDetail(r.id)}
-                    >
-                      <div className="thumb-box">
-                        {thumbs.has(r.id) ? (
-                          <img src={thumbs.get(r.id)} alt={r.filename} loading="lazy" />
-                        ) : (
-                          <div className="thumb-placeholder" aria-hidden="true" />
-                        )}
-                        <span
-                          className="cell-select"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={sel.selected.has(r.id)}
-                            onChange={() => sel.toggle(r.id)}
-                            aria-label={`Select ${r.filename}`}
-                          />
-                        </span>
-                        {r.starred && (
-                          <span className="star-badge" title="Starred">
-                            ★
-                          </span>
-                        )}
-                      </div>
-                      <figcaption>{r.filename}</figcaption>
-                    </figure>
-                  ))}
-                </div>
-                {sel.selected.size > 0 && (
+                {selectMode && (
                   <BulkBar
                     ids={[...sel.selected]}
                     collections={collections}
                     onDone={afterBulk}
                     onError={setError}
+                    selectAllLabel="Select all"
+                    selectingAll={selectingAll}
+                    onSelectAll={() => void selectAllInBurst()}
+                    onCancel={exitSelectMode}
                   />
                 )}
+                <div className={`shot-grid${selectMode ? " selecting" : ""}`}>
+                  {items.map((r) => (
+                    <ScreenshotCard
+                      key={r.id}
+                      row={r}
+                      thumbUrl={thumbs.get(r.id)}
+                      selected={sel.selected.has(r.id)}
+                      onOpen={onOpenDetail}
+                      onToggleSelect={toggleSel}
+                    />
+                  ))}
+                </div>
                 <div ref={sentinel} className="scroll-sentinel" aria-hidden="true">
                   {loading ? "Loading…" : hasMore ? "" : items.length > 0 ? "End." : ""}
                 </div>
                 {hasMore && (
                   <div className="load-more">
-                    <button onClick={loadMore} disabled={loading}>
+                    <Button onClick={loadMore} disabled={loading}>
                       {loading ? "Loading…" : `Load more (${items.length} shown)`}
-                    </button>
+                    </Button>
                   </div>
                 )}
                 {culling && <Cull items={items} onDone={afterCull} />}
-              </>
+              </div>
             )}
           </div>
         ))

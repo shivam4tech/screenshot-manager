@@ -7,6 +7,8 @@ import {
   type TimelineMonth,
 } from "../api";
 import { useInfiniteLoader } from "./scroll";
+import { Button, EmptyState } from "./ui";
+import { ScreenshotCard } from "./ScreenshotCard";
 
 const PAGE_SIZE = 60;
 
@@ -99,12 +101,18 @@ export default function Timeline({ onOpenDetail }: { onOpenDetail: (id: number) 
 
   return (
     <div className="timeline">
+      <div className="page-head">
+        <div>
+          <h1 className="page-title">Timeline</h1>
+          <p className="page-sub">Browse screenshots by capture date</p>
+        </div>
+      </div>
       {error && <p className="error">{error}</p>}
       {months.length === 0 && !error ? (
-        <div className="empty-state">
-          <h2>No dated screenshots.</h2>
-          <p>Shots with capture dates will appear here by month.</p>
-        </div>
+        <EmptyState
+          title="No dated screenshots"
+          body="Shots with capture dates will appear here by month."
+        />
       ) : (
         <>
           <div className="chip-strip" role="tablist" aria-label="Months">
@@ -137,28 +145,17 @@ export default function Timeline({ onOpenDetail }: { onOpenDetail: (id: number) 
 
           {date && (
             <>
-              <div className="grid">
+              <div className="shot-grid">
                 {items.map((r) => (
-                  <figure
+                  <ScreenshotCard
                     key={r.id}
-                    className="cell clickable"
-                    title={r.filename}
-                    onClick={() => onOpenDetail(r.id)}
-                  >
-                    <div className="thumb-box">
-                      {thumbs.has(r.id) ? (
-                        <img src={thumbs.get(r.id)} alt={r.filename} loading="lazy" />
-                      ) : (
-                        <div className="thumb-placeholder" aria-hidden="true" />
-                      )}
-                      {r.starred && (
-                        <span className="star-badge" title="Starred">
-                          ★
-                        </span>
-                      )}
-                    </div>
-                    <figcaption>{r.filename}</figcaption>
-                  </figure>
+                    row={r}
+                    thumbUrl={thumbs.get(r.id)}
+                    selected={false}
+                    selectable={false}
+                    onOpen={onOpenDetail}
+                    onToggleSelect={() => {}}
+                  />
                 ))}
               </div>
               <div ref={sentinel} className="scroll-sentinel" aria-hidden="true">
@@ -166,12 +163,12 @@ export default function Timeline({ onOpenDetail }: { onOpenDetail: (id: number) 
               </div>
               {date && hasMore && (
                 <div className="load-more">
-                  <button
+                  <Button
                     onClick={() => loadDay(date, items.length)}
                     disabled={loading}
                   >
                     {loading ? "Loading…" : `Load more (${items.length} shown)`}
-                  </button>
+                  </Button>
                 </div>
               )}
             </>

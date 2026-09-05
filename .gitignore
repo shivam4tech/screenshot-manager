@@ -12,3 +12,6 @@ src-tauri/gen/
 *.log
 .env
 .DS_Store
+
+# Design references (never commit)
+DesignImages/
