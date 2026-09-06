@@ -18,7 +18,7 @@ import Cull from "./Cull";
 import { BulkBar, useSelection } from "./bulk";
 import { useInfiniteLoader } from "./scroll";
 import { Icons, type IconName } from "./icons";
-import { Button, CountBadge, Dropdown, EmptyState, IconButton, SearchBar, ToastStack, useToasts } from "./ui";
+import { Button, CountBadge, Dropdown, EmptyState, IconButton, SearchBar, ToastStack, Toggle, useToasts } from "./ui";
 import { ScreenshotCard, displayName } from "./ScreenshotCard";
 import type { Accent, Theme } from "../theme";
 
@@ -672,17 +672,10 @@ export default function Library({
               </div>
             </span>
           </div>
-          <div className="side-footer-row">
-            <span className="muted small">Theme</span>
-            <button
-              className="theme-toggle"
-              onClick={onToggleTheme}
-              title={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
-              aria-label="Toggle color theme"
-            >
-              {theme === "dark" ? <Icons.sun size={13} /> : <Icons.moon size={13} />}
-              {theme === "dark" ? "Light" : "Dark"}
-            </button>
+          <div className="theme-row">
+            <span className="side-ic">{theme === "dark" ? <Icons.moon size={16} /> : <Icons.sun size={16} />}</span>
+            <span className="side-label">Dark mode</span>
+            <Toggle checked={theme === "dark"} onChange={onToggleTheme} label="Toggle dark mode" />
           </div>
         </div>
       </aside>
