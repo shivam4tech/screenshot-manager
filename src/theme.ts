@@ -2,24 +2,42 @@
 
 export type Theme = "light" | "dark";
 
+/** Stored appearance preference; "system" follows the OS live. */
+export type ThemePref = "light" | "dark" | "system";
+
 const KEY = "shotmemory-theme";
 
-export function initialTheme(): Theme {
+export function initialThemePref(): ThemePref {
   try {
     const saved = localStorage.getItem(KEY);
-    if (saved === "light" || saved === "dark") return saved;
+    if (saved === "light" || saved === "dark" || saved === "system") return saved;
   } catch {
     /* private mode etc. — fall through to OS preference */
   }
-  return window.matchMedia("(prefers-color-scheme: dark)").matches
-    ? "dark"
-    : "light";
+  return "system";
+}
+
+export function resolveTheme(pref: ThemePref): Theme {
+  if (pref === "light" || pref === "dark") return pref;
+  try {
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  } catch {
+    return "light";
+  }
+}
+
+/** Back-compat initial value: resolved theme on first paint. */
+export function initialTheme(): Theme {
+  return resolveTheme(initialThemePref());
 }
 
 export function applyTheme(t: Theme) {
   document.documentElement.dataset.theme = t;
+}
+
+export function persistThemePref(p: ThemePref) {
   try {
-    localStorage.setItem(KEY, t);
+    localStorage.setItem(KEY, p);
   } catch {
     /* ignore */
   }

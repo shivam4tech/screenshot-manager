@@ -18,9 +18,10 @@ import Cull from "./Cull";
 import { BulkBar, useSelection } from "./bulk";
 import { useInfiniteLoader } from "./scroll";
 import { Icons, type IconName } from "./icons";
-import { Button, CountBadge, Dropdown, EmptyState, IconButton, SearchBar, ToastStack, Toggle, useToasts } from "./ui";
+import { Button, CountBadge, Dropdown, EmptyState, IconButton, SearchBar, ShortcutsOverlay, ToastStack, Toggle, useConfirm, useToasts } from "./ui";
 import { ScreenshotCard, displayName } from "./ScreenshotCard";
-import type { Accent, Theme } from "../theme";
+import { SearchSuggest, clearRecents, loadRecents, saveRecent, type SuggestHandle } from "./SearchSuggest";
+import type { Accent, Theme, ThemePref } from "../theme";
 
 const PAGE_SIZE = 60;
 const SEARCH_PAGE_SIZE = 60;
@@ -95,6 +96,8 @@ export default function Library({
   appState,
   theme,
   onToggleTheme,
+  themePref,
+  onThemePrefChange,
   accent,
   onAccentChange,
   customHex,
@@ -103,6 +106,8 @@ export default function Library({
   appState: AppStateDto | null;
   theme: Theme;
   onToggleTheme: () => void;
+  themePref: ThemePref;
+  onThemePrefChange: (p: ThemePref) => void;
   accent: Accent;
   onAccentChange: (a: Accent) => void;
   customHex: string;
@@ -114,6 +119,9 @@ export default function Library({
   const [loading, setLoading] = useState(false);
   const busy = useRef(false);
   const searchRef = useRef<HTMLInputElement>(null);
+  const suggestRef = useRef<SuggestHandle>(null);
+  const [suggestOpen, setSuggestOpen] = useState(false);
+  const [recents, setRecents] = useState<string[]>(() => loadRecents());
 
   // Search state (Sprint 2)
   const [query, setQuery] = useState("");
@@ -142,8 +150,8 @@ export default function Library({
   const [starredCount, setStarredCount] = useState<number | null>(null);
   const [dirs, setDirs] = useState<DirectoryDto[]>([]);
   const [selectingAll, setSelectingAll] = useState(false);
-  const [selectMode, setSelectMode] = useState(false);
   const sel = useSelection();
+  const { confirm, confirmNode } = useConfirm();
   const { toasts, push: toast, dismiss: dismissToast, pause: pauseToast, resume: resumeToast } = useToasts();
 
   const resolveThumbs = useCallback(async (items: { id: number; content_hash: string | null }[]) => {
@@ -260,18 +268,28 @@ export default function Library({
   // Selection never survives a context switch.
   useEffect(() => {
     sel.clear();
-    setSelectMode(false);
   }, [activeQuery, view]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const toggleSel = useCallback((id: number) => {
-    sel.toggle(id);
-    setSelectMode(true);
-  }, [sel]);
+  /* ---- keyboard navigation (roving focus over cards) ---- */
+  const cardEls = useRef(new Map<number, HTMLElement>());
+  const trashHotkeyRef = useRef<(() => void) | null>(null);
 
-  const exitSelectMode = useCallback(() => {
-    sel.clear();
-    setSelectMode(false);
-  }, [sel]);
+  const registerCard = useCallback((id: number, el: HTMLElement | null) => {
+    if (el) cardEls.current.set(id, el);
+    else cardEls.current.delete(id);
+  }, []);
+
+  const focusCard = useCallback((id: number) => {
+    cardEls.current.get(id)?.focus();
+  }, []);
+
+  /** Close the detail modal and return focus to the card that opened it. */
+  const closeDetail = useCallback(() => {
+    setDetailId((id) => {
+      if (id !== null) requestAnimationFrame(() => cardEls.current.get(id)?.focus());
+      return null;
+    });
+  }, []);
 
   const addFolder = async () => {
     setOrganizeError(null);
@@ -288,7 +306,13 @@ export default function Library({
   };
 
   const removeFolder = async (d: DirectoryDto) => {
-    if (!window.confirm(`Stop watching “${d.path}”?\n\nIndexed records are kept.`)) return;
+    const ok = await confirm({
+      title: `Stop watching “${d.path}”?`,
+      body: "Indexed records are kept.",
+      confirmLabel: "Stop watching",
+      danger: true,
+    });
+    if (!ok) return;
     setOrganizeError(null);
     try {
       await api.removeDirectory(d.id);
@@ -329,6 +353,23 @@ export default function Library({
     }).catch((e) => setOrganizeError(String(e)));
   }, [refreshOrganize, toast]);
 
+  /** Restore trashed screenshots (toast Undo) and reselect them. */
+  const undoTrash = useCallback(async (ids: number[]) => {
+    try {
+      const s = await api.restoreScreenshots(ids);
+      const ok = ids.filter((id) => !s.failed.some((f) => f.id === id));
+      refreshAfterChange();
+      if (ok.length > 0) sel.selectAll(ok);
+      toast(
+        ok.length === ids.length
+          ? `Restored ${ok.length} screenshot${ok.length === 1 ? "" : "s"}.`
+          : `Restored ${ok.length} of ${ids.length}.`
+      );
+    } catch (e) {
+      setOrganizeError(String(e));
+    }
+  }, [refreshAfterChange, sel, toast]);
+
   /** After a bulk action: drop trashed rows, clear selection, refresh counts. */
   const afterBulk = useCallback(
     (removedIds: number[]) => {
@@ -339,12 +380,15 @@ export default function Library({
         setSearchOutcome((o) =>
           o ? { total: o.total - removedIds.length, rows: o.rows.filter((row) => !gone.has(row.id)) } : o
         );
-        toast(`${removedIds.length} screenshot${removedIds.length === 1 ? "" : "s"} moved to trash`);
+        toast(`${removedIds.length} screenshot${removedIds.length === 1 ? "" : "s"} moved to trash`, {
+          label: "Undo",
+          fn: () => void undoTrash(removedIds),
+        });
       }
       sel.clear();
       refreshOrganize();
     },
-    [refreshOrganize, toast] // eslint-disable-line react-hooks/exhaustive-deps
+    [refreshOrganize, toast, undoTrash] // eslint-disable-line react-hooks/exhaustive-deps
   );
 
   /** Next page for the visible grid (ranked search stays top-N by design). */
@@ -375,8 +419,14 @@ export default function Library({
       .catch((e) => setOrganizeError(String(e)));
   };
 
-  const deleteCollection = (c: CollectionInfo) => {
-    if (!window.confirm(`Delete collection “${c.name}”? Screenshots are kept.`)) return;
+  const deleteCollection = async (c: CollectionInfo) => {
+    const ok = await confirm({
+      title: `Delete collection “${c.name}”?`,
+      body: "Screenshots are kept; only the collection is removed.",
+      confirmLabel: "Delete collection",
+      danger: true,
+    });
+    if (!ok) return;
     api
       .deleteCollection(c.id)
       .then(() => {
@@ -442,6 +492,91 @@ export default function Library({
     }
   };
 
+  /* ---- roving arrow-key navigation over the visible cards ---- */
+  const countColumns = useCallback(() => {
+    if (viewMode === "list") return 1;
+    const els = gridRows
+      .map((r) => cardEls.current.get(r.id))
+      .filter((el): el is HTMLElement => !!el);
+    if (els.length < 2) return 1;
+    const top = els[0].offsetTop;
+    let n = 1;
+    for (let i = 1; i < els.length; i++) {
+      if (els[i].offsetTop === top) n++;
+      else break;
+    }
+    return Math.max(1, n);
+  }, [gridRows, viewMode]);
+
+  const onGridKeyDown = useCallback((e: React.KeyboardEvent) => {
+    const target = e.target as HTMLElement;
+    // Let inner controls (checkbox, star) handle their own keys.
+    if (target.closest("button, input, select, textarea, a")) return;
+    const ids = gridRows.map((r) => r.id);
+    if (ids.length === 0) return;
+    const activeEl = document.activeElement as HTMLElement | null;
+    let idx = ids.findIndex((id) => cardEls.current.get(id) === activeEl);
+    const cols = countColumns();
+    const move = (next: number) => focusCard(ids[Math.max(0, Math.min(ids.length - 1, next))]);
+    switch (e.key) {
+      case "ArrowRight": e.preventDefault(); move(idx < 0 ? 0 : idx + 1); break;
+      case "ArrowLeft": e.preventDefault(); move(idx < 0 ? 0 : idx - 1); break;
+      case "ArrowDown": e.preventDefault(); move(idx < 0 ? 0 : idx + cols); break;
+      case "ArrowUp": e.preventDefault(); move(idx < 0 ? 0 : idx - cols); break;
+      case "Home": e.preventDefault(); move(0); break;
+      case "End": e.preventDefault(); move(ids.length - 1); break;
+    }
+  }, [gridRows, countColumns, focusCard]);
+
+  const [showShortcuts, setShowShortcuts] = useState(false);
+
+  const isTypingTarget = (e: KeyboardEvent) => {
+    const t = e.target as HTMLElement | null;
+    return !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
+  };
+
+  /* Global hotkeys + Escape layering (menus and modals handle their own Esc). */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") return; // search effect owns Ctrl+K
+      const modalOpen = detailId !== null || culling;
+      const menuOpen = !!document.querySelector(".dd-menu,.suggest-menu") || !!document.querySelector(".confirm-backdrop");
+      if (e.key === "Escape") {
+        if (modalOpen || menuOpen) return; // topmost layer handles its own Esc
+        if (showShortcuts) {
+          e.preventDefault();
+          setShowShortcuts(false);
+        }
+        return;
+      }
+      const layered = modalOpen || menuOpen;
+      if (layered || isTypingTarget(e)) return;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
+        if (!inSpecial && gridRows.length > 0) {
+          e.preventDefault();
+          void selectAllTotal();
+        }
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === ",") {
+        e.preventDefault();
+        setQuery("");
+        setView({ kind: "settings" });
+        return;
+      }
+      if (e.key === "?") {
+        e.preventDefault();
+        setShowShortcuts(true);
+        return;
+      }
+      if ((e.key === "Delete" || e.key === "Backspace") && sel.selected.size > 0 && !inSpecial) {
+        e.preventDefault();
+        trashHotkeyRef.current?.();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [detailId, culling, showShortcuts, inSpecial, gridRows.length, selectAllTotal, sel.selected.size]);
   const emptyLibrary = !inSearch && !inCollection && rows.length === 0 && !loading;
   const noResults =
     inSearch && !searching && !searchError && (searchOutcome?.rows.length ?? 0) === 0;
@@ -683,14 +818,73 @@ export default function Library({
       <div className="library-main">
         <header className="toolbar-sticky">
           <div className="header-row">
-            <SearchBar
-              ref={searchRef}
-              placeholder={SEARCH_HINT}
-              aria-label="Search screenshots"
-              kbd="Ctrl K"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
+            <div className="search-wrap">
+              <SearchBar
+                ref={searchRef}
+                placeholder={SEARCH_HINT}
+                aria-label="Search screenshots"
+                aria-expanded={suggestOpen}
+                aria-controls="search-suggest"
+                aria-autocomplete="list"
+                role="combobox"
+                kbd="Ctrl K"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onFocus={() => setSuggestOpen(true)}
+                onBlur={() => {
+                  setSuggestOpen(false);
+                  // Typed a query, saw its results, clicked away: that's a real search.
+                  const q = query.trim();
+                  if (q && q === activeQuery.trim()) {
+                    saveRecent(q);
+                    setRecents(loadRecents());
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "ArrowDown" && !suggestOpen) setSuggestOpen(true);
+                  if (!suggestOpen) return;
+                  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                    e.preventDefault();
+                    suggestRef.current?.move(e.key === "ArrowDown" ? 1 : -1);
+                  } else if (e.key === "Enter") {
+                    const kind = suggestRef.current?.choose() ?? null;
+                    if (kind === null || kind === "recent") {
+                      saveRecent(query);
+                      setRecents(loadRecents());
+                      setSuggestOpen(false);
+                    }
+                  } else if (e.key === "Escape") {
+                    setSuggestOpen(false);
+                  }
+                }}
+              />
+              {suggestOpen && (
+                <div id="search-suggest">
+                  <SearchSuggest
+                    ref={suggestRef}
+                    query={query}
+                    tags={tags}
+                    collections={collections}
+                    recents={recents}
+                    onClearRecents={() => {
+                      clearRecents();
+                      setRecents([]);
+                    }}
+                    onApply={(q, kind) => {
+                      setQuery(q);
+                      if (kind === "recent") {
+                        saveRecent(q);
+                        setRecents(loadRecents());
+                        setSuggestOpen(false);
+                        searchRef.current?.blur();
+                      } else {
+                        searchRef.current?.focus();
+                      }
+                    }}
+                  />
+                </div>
+              )}
+            </div>
             {!inSpecial && gridRows.length > 0 && (
               <button
                 className="cull-btn"
@@ -704,6 +898,15 @@ export default function Library({
 
           {!inSpecial && (
             <div className="toolbar-row" role="toolbar" aria-label="Filters">
+              {view.kind === "collection" && inSearch && (
+                <button
+                  className="scope-chip"
+                  onClick={() => setQuery("")}
+                  title="Search is showing results across the library — click to return to this collection"
+                >
+                  in {view.name} ×
+                </button>
+              )}
               <Dropdown
                 ariaLabel="Date filter"
                 value={dateOpt}
@@ -783,14 +986,7 @@ export default function Library({
               {pageSub && <p className="page-sub">{pageSub}</p>}
             </div>
             <div className="page-head-actions">
-              <Button
-                size="sm"
-                variant={selectMode ? "secondary" : "ghost"}
-                onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
-                title="Select screenshots for bulk actions"
-              >
-                {selectMode ? "Cancel" : "Select"}
-              </Button>
+              <IconButton icon="keyboard" label="Keyboard shortcuts (?)" onClick={() => setShowShortcuts(true)} />
               <span className="view-seg" role="group" aria-label="View">
                 <button className={viewMode === "grid" ? "on" : ""} onClick={() => setViewMode("grid")} title="Grid view" aria-label="Grid view" aria-pressed={viewMode === "grid"}>
                   <Icons.grid size={15} />
@@ -802,6 +998,22 @@ export default function Library({
             </div>
           </div>
         )}
+
+        {!inSpecial && (
+          <div className="selbar">
+            <BulkBar
+                ids={[...sel.selected]}
+                collections={collections}
+              onDone={afterBulk}
+              onError={setOrganizeError}
+              selectAllLabel={inSearch ? "Select all results" : "Select all"}
+              selectingAll={selectingAll}
+              onSelectAll={() => void selectAllTotal()}
+              onCancel={() => sel.clear()}
+                trashHotkeyRef={trashHotkeyRef}
+              />
+            </div>
+          )}
 
         {inSpecial ? (
           view.kind === "timeline" ? (
@@ -820,6 +1032,8 @@ export default function Library({
               onAccentChange={onAccentChange}
               customHex={customHex}
               onCustomAccent={onCustomAccent}
+              themePref={themePref}
+              onThemePrefChange={onThemePrefChange}
             />
           )
         ) : searchError ? (
@@ -842,20 +1056,8 @@ export default function Library({
           />
         ) : (
           <>
-            {selectMode && (
-              <BulkBar
-                ids={[...sel.selected]}
-                collections={collections}
-                onDone={afterBulk}
-                onError={setOrganizeError}
-                selectAllLabel={inSearch ? "Select all results" : "Select all"}
-                selectingAll={selectingAll}
-                onSelectAll={() => void selectAllTotal()}
-                onCancel={exitSelectMode}
-              />
-            )}
             {viewMode === "grid" ? (
-              <div className={`shot-grid${selectMode ? " selecting" : ""}`}>
+              <div className="shot-grid" onKeyDown={onGridKeyDown}>
                 {gridRows.map((r) => (
                   <ScreenshotCard
                     key={r.id}
@@ -863,25 +1065,33 @@ export default function Library({
                     thumbUrl={thumbs.get(r.id)}
                     selected={sel.selected.has(r.id)}
                     onOpen={(id) => setDetailId(id)}
-                    onToggleSelect={toggleSel}
+                    onToggleSelect={(id) => sel.toggle(id)}
                     onToggleStar={toggleStar}
+                    cardRef={registerCard}
                   />
                 ))}
               </div>
             ) : (
-              <div className={`shot-list${selectMode ? " selecting" : ""}`}>
+              <div className="shot-list" onKeyDown={onGridKeyDown}>
                 {gridRows.map((r) => (
                   <div
                     key={r.id}
+                    ref={(el) => registerCard(r.id, el)}
                     className={`shot-row${sel.selected.has(r.id) ? " selected" : ""}`}
                     title={r.filename}
+                    tabIndex={0}
+                    role="button"
+                    aria-label={`${displayName(r.filename)}${r.starred ? ", starred" : ""}`}
                     onClick={() => setDetailId(r.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && e.target === e.currentTarget) setDetailId(r.id);
+                    }}
                   >
                     <span onClick={(e) => e.stopPropagation()}>
                       <input
                         type="checkbox"
                         checked={sel.selected.has(r.id)}
-                        onChange={() => toggleSel(r.id)}
+                        onChange={() => sel.toggle(r.id)}
                         aria-label={`Select ${r.filename}`}
                       />
                     </span>
@@ -937,8 +1147,9 @@ export default function Library({
         {detailId !== null && (
           <Detail
             id={detailId}
-            onClose={() => setDetailId(null)}
+            onClose={closeDetail}
             onChanged={refreshAfterChange}
+            onNotify={(msg, action) => toast(msg, action)}
             onPrev={(() => {
               const i = gridRows.findIndex((r) => r.id === detailId);
               return i > 0 ? () => setDetailId(gridRows[i - 1].id) : undefined;
@@ -963,6 +1174,8 @@ export default function Library({
             }}
           />
         )}
+        {showShortcuts && <ShortcutsOverlay onClose={() => setShowShortcuts(false)} />}
+        {confirmNode}
         <ToastStack toasts={toasts} onClose={dismissToast} onPause={pauseToast} onResume={resumeToast} />
       </div>
     </div>

@@ -6,7 +6,7 @@ import {
   type ScreenshotDetail,
 } from "../api";
 import { Icons } from "./icons";
-import { Button, Dropdown, IconButton } from "./ui";
+import { Button, Dropdown, IconButton, useConfirm, type ToastAction } from "./ui";
 
 /**
  * Detail overlay: large preview + metadata inspector, plus organization
@@ -20,6 +20,7 @@ export default function Detail({
   onPrev,
   onNext,
   position,
+  onNotify,
 }: {
   id: number;
   onClose: () => void;
@@ -27,6 +28,7 @@ export default function Detail({
   onPrev?: () => void;
   onNext?: () => void;
   position?: string;
+  onNotify?: (msg: string, action?: ToastAction) => void;
 }) {
   const [detail, setDetail] = useState<ScreenshotDetail | null>(null);
   const [imgUrl, setImgUrl] = useState<string | null>(null);
@@ -41,6 +43,7 @@ export default function Detail({
   const [copiedPath, setCopiedPath] = useState(false);
   const [tagEditing, setTagEditing] = useState(false);
   const lastZoom = useRef(2);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   const toggleFit = useCallback(() => {
     if (zoom === 1) {
@@ -65,12 +68,35 @@ export default function Detail({
     setZoom(1);
     setCopied(false);
     reload().catch((e) => alive && setError(String(e)));
+    // Move initial focus into the dialog (but not into a control).
+    panelRef.current?.focus();
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       const typing = t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT");
-      if (e.key === "Escape") onClose();
-      else if (!typing && e.key === "ArrowLeft") onPrev?.();
+      if (e.key === "Escape") {
+        // A dropdown menu, confirm dialog, or the shortcuts overlay on top closes first.
+        if (panelRef.current?.querySelector(".dd-menu")) return;
+        if (document.querySelector(".confirm-backdrop")) return;
+        if (document.querySelector('[aria-label="Keyboard shortcuts"]')) return;
+        onClose();
+      } else if (!typing && e.key === "ArrowLeft") onPrev?.();
       else if (!typing && e.key === "ArrowRight") onNext?.();
+      else if (e.key === "Tab" && panelRef.current) {
+        // Focus trap: keep Tab cycling inside the dialog.
+        const els = [...panelRef.current.querySelectorAll<HTMLElement>(
+          "button, input, select, textarea, [tabindex]"
+        )].filter((el) => !el.hasAttribute("disabled") && el.tabIndex >= 0 && el.offsetParent !== null);
+        if (els.length === 0) return;
+        const first = els[0];
+        const last = els[els.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => {
@@ -118,19 +144,31 @@ export default function Detail({
     void mutate(() => api.setNote(id, text));
   };
 
-  const deleteSelf = () => {
-    if (
-      !window.confirm(
-        "Move this screenshot to the trash?\n\nThe file goes to the OS trash (recoverable); its record stays in the library as missing."
-      )
-    )
-      return;
+  const { confirm, confirmNode } = useConfirm();
+
+  const deleteSelf = async () => {
+    const ok = await confirm({
+      title: "Move this screenshot to the trash?",
+      body: "The file goes to the OS trash (recoverable); its record stays in the library as missing.",
+      confirmLabel: "Move to trash",
+      danger: true,
+    });
+    if (!ok) return;
     setSaving(true);
     api
       .deleteScreenshots([id])
       .then(() => {
         onChanged();
         onClose();
+        onNotify?.("Screenshot moved to trash.", {
+          label: "Undo",
+          fn: () => {
+            void api
+              .restoreScreenshots([id])
+              .then(() => onChanged())
+              .catch((e) => setError(String(e)));
+          },
+        });
       })
       .catch((e) => {
         setError(String(e));
@@ -166,7 +204,7 @@ export default function Detail({
 
   return (
     <div className="detail-backdrop" onClick={onClose} role="dialog" aria-modal="true" aria-label="Screenshot detail">
-      <div className="detail-panel" onClick={(e) => e.stopPropagation()}>
+      <div className="detail-panel" ref={panelRef} tabIndex={-1} onClick={(e) => e.stopPropagation()}>
         <div className={`detail-media${zoom > 1 ? " zoomed" : ""}`}>
           {imgUrl ? (
             <img
@@ -375,6 +413,7 @@ export default function Detail({
           )}
         </div>
       </div>
+      {confirmNode}
     </div>
   );
 }

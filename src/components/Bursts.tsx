@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
   thumbnailUrl,
@@ -9,7 +9,7 @@ import {
 import { BulkBar, useSelection } from "./bulk";
 import { useInfiniteLoader } from "./scroll";
 import { Icons } from "./icons";
-import { Button, Dropdown } from "./ui";
+import { Button, Dropdown, ToastStack, useToasts } from "./ui";
 import { ScreenshotCard } from "./ScreenshotCard";
 import Cull from "./Cull";
 
@@ -58,17 +58,23 @@ export default function Bursts({
   const [error, setError] = useState<string | null>(null);
   const [culling, setCulling] = useState(false);
   const [selectingAll, setSelectingAll] = useState(false);
-  const [selectMode, setSelectMode] = useState(false);
   const sel = useSelection();
+  const trashHotkeyRef = useRef<(() => void) | null>(null);
+  const { toasts, push: toast, dismiss: dismissToast, pause: pauseToast, resume: resumeToast } = useToasts();
 
-  const toggleSel = (id: number) => {
-    sel.toggle(id);
-    setSelectMode(true);
-  };
-  const exitSelectMode = () => {
-    sel.clear();
-    setSelectMode(false);
-  };
+  /* Delete key trashes the current selection (same confirm flow as the button). */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      const typing = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
+      if ((e.key === "Delete" || e.key === "Backspace") && !typing && sel.selected.size > 0) {
+        e.preventDefault();
+        trashHotkeyRef.current?.();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [sel.selected.size]);
 
   const resolveThumbs = useCallback(
     async (rows: { id: number; content_hash: string | null }[]) => {
@@ -119,13 +125,11 @@ export default function Bursts({
       setOpenKey(null);
       setItems([]);
       sel.clear();
-      setSelectMode(false);
       return;
     }
     setOpenKey(b.key);
     setItems([]);
     sel.clear();
-    setSelectMode(false);
     setError(null);
     setLoading(true);
     api
@@ -156,10 +160,31 @@ export default function Bursts({
 
   const sentinel = useInfiniteLoader(openKey !== null && hasMore, loading, loadMore);
 
+  const undoTrash = async (ids: number[]) => {
+    try {
+      const s = await api.restoreScreenshots(ids);
+      const ok = ids.filter((id) => !s.failed.some((f) => f.id === id));
+      reload();
+      refreshOrganize();
+      if (ok.length > 0) sel.selectAll(ok);
+      toast(
+        ok.length === ids.length
+          ? `Restored ${ok.length} screenshot${ok.length === 1 ? "" : "s"}.`
+          : `Restored ${ok.length} of ${ids.length}.`
+      );
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
   const afterBulk = (removedIds: number[]) => {
     if (removedIds.length > 0) {
       setItems((rows) => rows.filter((r) => !removedIds.includes(r.id)));
       sel.remove(removedIds);
+      toast(`${removedIds.length} screenshot${removedIds.length === 1 ? "" : "s"} moved to trash`, {
+        label: "Undo",
+        fn: () => void undoTrash(removedIds),
+      });
     } else {
       sel.clear();
     }
@@ -199,14 +224,6 @@ export default function Bursts({
           {bursts.length} session{bursts.length === 1 ? "" : "s"}
         </span>
         <span className="toolbar-group">
-          <Button
-            size="sm"
-            variant={selectMode ? "secondary" : "ghost"}
-            onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
-            title="Select screenshots for bulk actions"
-          >
-            {selectMode ? "Cancel" : "Select"}
-          </Button>
           <Dropdown
             ariaLabel="Burst gap"
             prefix="Split after:"
@@ -267,19 +284,18 @@ export default function Bursts({
                     Cull burst
                   </button>
                 </div>
-                {selectMode && (
-                  <BulkBar
-                    ids={[...sel.selected]}
-                    collections={collections}
-                    onDone={afterBulk}
-                    onError={setError}
-                    selectAllLabel="Select all"
-                    selectingAll={selectingAll}
-                    onSelectAll={() => void selectAllInBurst()}
-                    onCancel={exitSelectMode}
-                  />
-                )}
-                <div className={`shot-grid${selectMode ? " selecting" : ""}`}>
+                <BulkBar
+                  ids={[...sel.selected]}
+                  collections={collections}
+                  onDone={afterBulk}
+                  onError={setError}
+                  selectAllLabel="Select all"
+                  selectingAll={selectingAll}
+                  onSelectAll={() => void selectAllInBurst()}
+                  onCancel={() => sel.clear()}
+                  trashHotkeyRef={trashHotkeyRef}
+                />
+                <div className="shot-grid">
                   {items.map((r) => (
                     <ScreenshotCard
                       key={r.id}
@@ -287,7 +303,7 @@ export default function Bursts({
                       thumbUrl={thumbs.get(r.id)}
                       selected={sel.selected.has(r.id)}
                       onOpen={onOpenDetail}
-                      onToggleSelect={toggleSel}
+                      onToggleSelect={(id) => sel.toggle(id)}
                     />
                   ))}
                 </div>
@@ -307,6 +323,7 @@ export default function Bursts({
           </div>
         ))
       )}
+      <ToastStack toasts={toasts} onClose={dismissToast} onPause={pauseToast} onResume={resumeToast} />
     </div>
   );
 }

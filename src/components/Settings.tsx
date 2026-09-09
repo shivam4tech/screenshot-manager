@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type ClassifySummary, type Problem } from "../api";
-import { ACCENTS, type Accent } from "../theme";
+import { ACCENTS, type Accent, type ThemePref } from "../theme";
 import { Icons } from "./icons";
 import { Button, Toggle } from "./ui";
 
@@ -14,11 +14,15 @@ export default function Settings({
   onAccentChange,
   customHex,
   onCustomAccent,
+  themePref,
+  onThemePrefChange,
 }: {
   accent: Accent;
   onAccentChange: (a: Accent) => void;
   customHex: string;
   onCustomAccent: (hex: string) => void;
+  themePref: ThemePref;
+  onThemePrefChange: (p: ThemePref) => void;
 }) {
   const [problems, setProblems] = useState<Problem[]>([]);
   const [ocrEnabled, setOcrEnabled] = useState(true);
@@ -134,6 +138,21 @@ export default function Settings({
           <div className="accent-preview" aria-hidden="true">
             <span className="preview-nav">Selected item</span>
             <span className="preview-btn">Primary button</span>
+          </div>
+          <div className="theme-pref-row" role="radiogroup" aria-label="Appearance mode">
+            <span className="muted small">Mode</span>
+            {(["light", "system", "dark"] as const).map((m) => (
+              <button
+                key={m}
+                role="radio"
+                aria-checked={themePref === m}
+                className={`theme-pref${themePref === m ? " on" : ""}`}
+                onClick={() => onThemePrefChange(m)}
+                title={m === "system" ? "Follow the operating system" : `${m[0].toUpperCase()}${m.slice(1)} mode`}
+              >
+                {m === "light" ? "Light" : m === "dark" ? "Dark" : "System"}
+              </button>
+            ))}
           </div>
         </div>
       </section>

@@ -203,7 +203,8 @@ export function Toggle({ checked, onChange, label, disabled }: {
 
 /* ---------- Toasts ---------- */
 
-export interface ToastItem { id: number; message: string; }
+export interface ToastAction { label: string; fn: () => void; }
+export interface ToastItem { id: number; message: string; action?: ToastAction; }
 
 let toastSeq = 1;
 
@@ -217,10 +218,10 @@ export function useToasts() {
     if (tm) { clearTimeout(tm); timers.current.delete(id); }
   }, []);
 
-  const push = useCallback((message: string) => {
+  const push = useCallback((message: string, action?: ToastAction) => {
     const id = toastSeq++;
-    setToasts((t) => [...t.slice(-3), { id, message }]);
-    timers.current.set(id, setTimeout(() => dismiss(id), 4000));
+    setToasts((t) => [...t.slice(-3), { id, message, action }]);
+    timers.current.set(id, setTimeout(() => dismiss(id), 6000));
   }, [dismiss]);
 
   const pause = useCallback((id: number) => {
@@ -254,9 +255,115 @@ export function ToastStack({ toasts, onClose, onPause, onResume }: {
           onMouseLeave={() => onResume(t.id)}
         >
           <span className="toast-msg">{t.message}</span>
+          {t.action && (
+            <button
+              className="toast-action"
+              onClick={() => { t.action!.fn(); onClose(t.id); }}
+            >
+              {t.action.label}
+            </button>
+          )}
           <button className="toast-x" onClick={() => onClose(t.id)} aria-label="Dismiss">✕</button>
         </div>
       ))}
+    </div>
+  );
+}
+
+/* ---------- Confirm dialog (replaces native confirm()) ---------- */
+
+export interface ConfirmOptions {
+  title: string;
+  body: string;
+  confirmLabel?: string;
+  danger?: boolean;
+}
+
+export function useConfirm() {
+  const [req, setReq] = useState<null | (ConfirmOptions & { resolve: (v: boolean) => void })>(null);
+
+  const confirm = useCallback(
+    (opts: ConfirmOptions) =>
+      new Promise<boolean>((resolve) => setReq({ ...opts, resolve })),
+    []
+  );
+
+  const settle = useCallback(
+    (v: boolean) => setReq((r) => {
+      r?.resolve(v);
+      return null;
+    }),
+    []
+  );
+
+  // Escape dismisses as cancel (parents skip their own Esc while open).
+  useEffect(() => {
+    if (!req) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") settle(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [req, settle]);
+
+  const node = req && (
+    <div className="detail-backdrop confirm-backdrop" onClick={() => settle(false)} role="alertdialog" aria-modal="true" aria-label={req.title}>
+      <div className="confirm-panel" onClick={(e) => e.stopPropagation()}>
+        <h3>{req.title}</h3>
+        <p className="muted">{req.body}</p>
+        <div className="confirm-actions">
+          <Button size="sm" variant="ghost" onClick={() => settle(false)} autoFocus>
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            variant={req.danger ? "danger" : "primary"}
+            onClick={() => settle(true)}
+          >
+            {req.confirmLabel ?? "Confirm"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+
+  return { confirm, confirmNode: node };
+}
+
+/* ---------- Shortcuts overlay ---------- */
+
+const SHORTCUTS: Array<[string, string]> = [
+  ["Ctrl K", "Focus search"],
+  ["← → ↑ ↓", "Move between screenshots"],
+  ["Enter", "Open focused screenshot"],
+  ["Esc", "Back / close dialog"],
+  ["Ctrl A", "Select all screenshots"],
+  ["Delete", "Move selection to trash"],
+  ["Ctrl ,", "Open settings"],
+  ["?", "Show this panel"],
+];
+
+export function ShortcutsOverlay({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="detail-backdrop" onClick={onClose} role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
+      <div className="shortcuts-panel" onClick={(e) => e.stopPropagation()}>
+        <div className="detail-head">
+          <h3>Keyboard shortcuts</h3>
+          <IconButton icon="x" label="Close shortcuts" onClick={onClose} />
+        </div>
+        <dl className="shortcuts-list">
+          {SHORTCUTS.map(([keys, desc]) => (
+            <div className="shortcuts-row" key={keys}>
+              <dt>
+                {keys.split(" ").map((k, i) => (
+                  <kbd className="kbd" key={i}>{k}</kbd>
+                ))}
+              </dt>
+              <dd>{desc}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
     </div>
   );
 }

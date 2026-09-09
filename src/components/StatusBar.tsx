@@ -121,7 +121,7 @@ export default function StatusBar({
             </button>
           </>
         ) : (
-          ocrNote && <span className="muted">{ocrNote}</span>
+          ocrNote && <span className="muted" role="status">{ocrNote}</span>
         )}
       </span>
     </footer>

@@ -6,7 +6,7 @@ import {
   type DuplicateGroup,
 } from "../api";
 import { Icons } from "./icons";
-import { Button, Dropdown, EmptyState } from "./ui";
+import { Button, Dropdown, EmptyState, useConfirm } from "./ui";
 import { displayName } from "./ScreenshotCard";
 
 const THRESHOLDS = [4, 8, 12];
@@ -73,6 +73,8 @@ export default function Duplicates({
     reload(threshold);
   }, [reload, threshold]);
 
+  const { confirm, confirmNode } = useConfirm();
+
   const bulk = async (label: string, fn: () => Promise<unknown>) => {
     setNote(null);
     setError(null);
@@ -95,14 +97,15 @@ export default function Duplicates({
       await reload(threshold);
     });
 
-  const trashGroupExceptNewest = (g: DuplicateGroup) => {
+  const trashGroupExceptNewest = async (g: DuplicateGroup) => {
     if (g.items.length < 2) return;
-    if (
-      !window.confirm(
-        `Move ${g.items.length - 1} older copies to the trash and keep only the newest?\n\nFiles go to the OS trash (recoverable); records stay as missing.`
-      )
-    )
-      return;
+    const ok = await confirm({
+      title: `Move ${g.items.length - 1} older ${g.items.length - 1 === 1 ? "copy" : "copies"} to the trash?`,
+      body: "Keeps only the newest. Files go to the OS trash (recoverable); records stay as missing.",
+      confirmLabel: "Keep newest only",
+      danger: true,
+    });
+    if (!ok) return;
     // Items are newest-first, so everything past the first goes.
     void trashItems(
       g.items.slice(1).map((r) => r.id),
@@ -299,6 +302,7 @@ export default function Duplicates({
       ) : (
         groups.map((g, i) => renderGroup(g, tab === "exact" ? i : i + exact.length))
       )}
+      {confirmNode}
     </div>
   );
 }

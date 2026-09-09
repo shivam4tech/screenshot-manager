@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api, type CollectionInfo } from "../api";
-import { Dropdown } from "./ui";
+import { Dropdown, useConfirm } from "./ui";
 
 /** Selection state shared by every grid (library, bursts, timeline...). */
 export function useSelection() {
@@ -42,6 +42,7 @@ export function BulkBar({
   selectingAll,
   onSelectAll,
   onCancel,
+  trashHotkeyRef,
 }: {
   ids: number[];
   collections: CollectionInfo[];
@@ -51,12 +52,15 @@ export function BulkBar({
   selectingAll: boolean;
   onSelectAll: () => void;
   onCancel: () => void;
+  /** Lets parents trigger the trash action from a Delete hotkey. */
+  trashHotkeyRef?: { current: (() => void) | null };
 }) {
   const [target, setTarget] = useState("");
   const [newName, setNewName] = useState("");
   const [tag, setTag] = useState("");
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  const { confirm, confirmNode } = useConfirm();
 
   const run = async (label: string, fn: () => Promise<number[]>) => {
     setBusy(true);
@@ -106,13 +110,14 @@ export function BulkBar({
       return [];
     });
 
-  const trashAll = () => {
-    if (
-      !window.confirm(
-        `Move ${ids.length} screenshot${ids.length === 1 ? "" : "s"} to the trash?\n\nFiles go to the OS trash (recoverable); their records stay in the library as missing.`
-      )
-    )
-      return;
+  const trashAll = async () => {
+    const ok = await confirm({
+      title: `Move ${ids.length} screenshot${ids.length === 1 ? "" : "s"} to the trash?`,
+      body: "Files go to the OS trash (recoverable); their records stay in the library as missing.",
+      confirmLabel: "Move to trash",
+      danger: true,
+    });
+    if (!ok) return;
     void run("", async () => {
       const s = await api.deleteScreenshots(ids);
       const gone = ids.filter((id) => !s.failed.some((f) => f.id === id));
@@ -124,10 +129,20 @@ export function BulkBar({
     });
   };
 
+  // Expose the trash action so parents can bind it to the Delete hotkey.
+  if (trashHotkeyRef) trashHotkeyRef.current = trashAll;
+
   return (
+    <>
     <div className="bulk-bar" role="toolbar" aria-label="Bulk actions">
+      {ids.length === 0 ? (
+        <button className="btn btn-sm btn-ghost" disabled={busy || selectingAll} onClick={onSelectAll} title="Select every screenshot in this view">
+          {selectingAll ? "Selecting…" : selectAllLabel}
+        </button>
+      ) : (
+      <>
       <span className="bulk-count">{ids.length} selected</span>
-      <button className="btn btn-sm" disabled={busy || selectingAll} onClick={onSelectAll}>
+      <button className="btn btn-sm btn-ghost" disabled={busy || selectingAll} onClick={onSelectAll} title="Select every screenshot in this view">
         {selectingAll ? "Selecting…" : selectAllLabel}
       </button>
       <span className="bulk-sep" aria-hidden="true" />
@@ -197,6 +212,10 @@ export function BulkBar({
           {note}
         </span>
       )}
+      </>
+      )}
     </div>
+    {confirmNode}
+    </>
   );
 }

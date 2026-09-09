@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type AppStateDto } from "./api";
-import { applyTheme, getCustomHex, initialAccent, initialTheme, syncAccent, type Accent, type Theme } from "./theme";
+import { applyTheme, getCustomHex, initialAccent, initialThemePref, persistThemePref, resolveTheme, syncAccent, type Accent, type Theme, type ThemePref } from "./theme";
 import Onboarding from "./components/Onboarding";
 import Library from "./components/Library";
 import StatusBar from "./components/StatusBar";
@@ -11,13 +11,30 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>("loading");
   const [appState, setAppState] = useState<AppStateDto | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [theme, setTheme] = useState<Theme>(initialTheme);
+  const [themePref, setThemePref] = useState<ThemePref>(initialThemePref);
+  const [theme, setTheme] = useState<Theme>(() => resolveTheme(initialThemePref()));
   const [accent, setAccent] = useState<Accent>(initialAccent);
   const [customHex, setCustomHex] = useState<string>(getCustomHex);
 
   useEffect(() => {
-    applyTheme(theme);
-  }, [theme]);
+    persistThemePref(themePref);
+    const resolved = resolveTheme(themePref);
+    setTheme(resolved);
+    applyTheme(resolved);
+  }, [themePref]);
+
+  // Follow the OS appearance live while set to System.
+  useEffect(() => {
+    if (themePref !== "system") return;
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = () => {
+      const resolved = mq.matches ? "dark" : "light";
+      setTheme(resolved);
+      applyTheme(resolved);
+    };
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, [themePref]);
 
   useEffect(() => {
     syncAccent(accent, customHex, theme);
@@ -72,7 +89,9 @@ export default function App() {
         <Library
           appState={appState}
           theme={theme}
-          onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+          onToggleTheme={() => setThemePref((t) => (resolveTheme(t) === "dark" ? "light" : "dark"))}
+          themePref={themePref}
+          onThemePrefChange={setThemePref}
           accent={accent}
           onAccentChange={setAccent}
           customHex={customHex}

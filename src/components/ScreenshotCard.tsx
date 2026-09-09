@@ -48,17 +48,29 @@ interface Props {
   onToggleSelect: (id: number) => void;
   onToggleStar?: (id: number, next: boolean) => void;
   selectable?: boolean;
+  /** Ref callback so grids can implement arrow-key roving focus. */
+  cardRef?: (id: number, el: HTMLElement | null) => void;
   extraAction?: React.ReactNode;
 }
 
 export const ScreenshotCard = memo(function ScreenshotCard({
-  row, thumbUrl, selected, onOpen, onToggleSelect, onToggleStar, selectable = true, extraAction,
+  row, thumbUrl, selected, onOpen, onToggleSelect, onToggleStar, selectable = true, cardRef, extraAction,
 }: Props) {
   return (
     <figure
       className={`shot-card${selected ? " selected" : ""}`}
       title={row.filename}
+      tabIndex={0}
+      role="button"
+      aria-label={`${displayName(row.filename)}, ${dateLabel(row.created_ts)}${row.status !== "available" ? `, ${row.status}` : ""}${row.starred ? ", starred" : ""}`}
+      ref={(el) => cardRef?.(row.id, el)}
       onClick={() => onOpen(row.id)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || (e.key === " " && e.target === e.currentTarget)) {
+          e.preventDefault();
+          onOpen(row.id);
+        }
+      }}
     >
       <div className="shot-thumb">
         {thumbUrl ? (
