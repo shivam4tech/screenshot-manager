@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api, type CollectionInfo } from "../api";
-import { Dropdown, useConfirm } from "./ui";
+import { Dropdown, formatBytes, useConfirm } from "./ui";
 
 /** Selection state shared by every grid (library, bursts, timeline...). */
 export function useSelection() {
@@ -43,6 +43,10 @@ export function BulkBar({
   onSelectAll,
   onCancel,
   trashHotkeyRef,
+  trashIds,
+  selectionBytes,
+  confirmTitle,
+  confirmBody,
 }: {
   ids: number[];
   collections: CollectionInfo[];
@@ -54,6 +58,16 @@ export function BulkBar({
   onCancel: () => void;
   /** Lets parents trigger the trash action from a Delete hotkey. */
   trashHotkeyRef?: { current: (() => void) | null };
+  /**
+   * Override the trash implementation (e.g. Cleanup records searchable
+   * memories). Returns gone ids + the status line. Defaults to plain
+   * move-to-trash with no memory recording.
+   */
+  trashIds?: (ids: number[]) => Promise<{ gone: number[]; note: string }>;
+  /** Estimated selected bytes, shown next to the count when known. */
+  selectionBytes?: number | null;
+  confirmTitle?: string;
+  confirmBody?: string;
 }) {
   const [target, setTarget] = useState("");
   const [newName, setNewName] = useState("");
@@ -112,21 +126,32 @@ export function BulkBar({
 
   const trashAll = async () => {
     const ok = await confirm({
-      title: `Move ${ids.length} screenshot${ids.length === 1 ? "" : "s"} to the trash?`,
-      body: "Files go to the OS trash (recoverable); their records stay in the library as missing.",
+      title: confirmTitle ?? `Move ${ids.length} screenshot${ids.length === 1 ? "" : "s"} to the trash?`,
+      body: confirmBody ?? "Files go to the OS trash (recoverable); their records stay in the library as missing.",
       confirmLabel: "Move to trash",
       danger: true,
     });
     if (!ok) return;
-    void run("", async () => {
-      const s = await api.deleteScreenshots(ids);
-      const gone = ids.filter((id) => !s.failed.some((f) => f.id === id));
-      const bits = [`${s.trashed} trashed`];
-      if (s.already_missing > 0) bits.push(`${s.already_missing} already gone`);
-      if (s.failed.length > 0) bits.push(`${s.failed.length} failed`);
-      setNote(`${bits.join(", ")}.`);
-      return gone;
-    });
+    setBusy(true);
+    setNote(null);
+    try {
+      const res = trashIds
+        ? await trashIds(ids)
+        : await (async () => {
+            const s = await api.deleteScreenshots(ids);
+            const gone = ids.filter((id) => !s.failed.some((f) => f.id === id));
+            const bits = [`${s.trashed} trashed`];
+            if (s.already_missing > 0) bits.push(`${s.already_missing} already gone`);
+            if (s.failed.length > 0) bits.push(`${s.failed.length} failed`);
+            return { gone, note: `${bits.join(", ")}.` };
+          })();
+      setNote(res.note);
+      onDone(res.gone);
+    } catch (e) {
+      onError(String(e));
+    } finally {
+      setBusy(false);
+    }
   };
 
   // Expose the trash action so parents can bind it to the Delete hotkey.
@@ -141,7 +166,9 @@ export function BulkBar({
         </button>
       ) : (
       <>
-      <span className="bulk-count">{ids.length} selected</span>
+      <span className="bulk-count">
+        {ids.length} selected{selectionBytes != null && <> · {formatBytes(selectionBytes)}</>}
+      </span>
       <button className="btn btn-sm btn-ghost" disabled={busy || selectingAll} onClick={onSelectAll} title="Select every screenshot in this view">
         {selectingAll ? "Selecting…" : selectAllLabel}
       </button>

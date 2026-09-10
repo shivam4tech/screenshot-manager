@@ -26,6 +26,8 @@ export default function Settings({
 }) {
   const [problems, setProblems] = useState<Problem[]>([]);
   const [ocrEnabled, setOcrEnabled] = useState(true);
+  const [keepMemory, setKeepMemory] = useState(false);
+  const [keepThumb, setKeepThumb] = useState(false);
   const [dataDir, setDataDir] = useState("");
   const [classifyNote, setClassifyNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -33,14 +35,18 @@ export default function Settings({
   const [copiedDir, setCopiedDir] = useState(false);
 
   const refresh = useCallback(async () => {
-    const [p, ocr, dir] = await Promise.all([
+    const [p, ocr, dir, mem, thumb] = await Promise.all([
       api.listProblems(50),
       api.getSetting("ocr_enabled"),
       api.getDataDir(),
+      api.getSetting("keep_deleted_memory"),
+      api.getSetting("keep_deleted_thumbnail"),
     ]);
     setProblems(p);
     setOcrEnabled(ocr !== "0");
     setDataDir(dir);
+    setKeepMemory(mem === "1");
+    setKeepThumb(thumb === "1");
   }, []);
 
   useEffect(() => {
@@ -55,6 +61,21 @@ export default function Settings({
     } catch (e) {
       setError(String(e));
       setOcrEnabled(!next);
+    }
+  };
+
+  const toggleSetting = async (
+    key: "keep_deleted_memory" | "keep_deleted_thumbnail",
+    next: boolean,
+    apply: (v: boolean) => void,
+    current: boolean
+  ) => {
+    apply(next);
+    try {
+      await api.setSetting(key, next ? "1" : "0");
+    } catch (e) {
+      setError(String(e));
+      apply(current);
     }
   };
 
@@ -189,6 +210,39 @@ export default function Settings({
             {classifyNote && (
               <span className="muted small" role="status">{classifyNote}</span>
             )}
+          </div>
+        </div>
+      </section>
+
+      <section className="set-card">
+        <span className="set-ic"><Icons.drive size={18} /></span>
+        <div className="set-body">
+          <div className="set-row">
+            <div className="grow">
+              <h3>Keep searchable record after cleanup</h3>
+              <p className="muted small" style={{ margin: "0" }}>
+                Retain filename, metadata, tags, and OCR text of trashed
+                screenshots. Metadata only — never a backup.
+              </p>
+            </div>
+            <Toggle
+              checked={keepMemory}
+              onChange={() => void toggleSetting("keep_deleted_memory", !keepMemory, setKeepMemory, keepMemory)}
+              label="Keep searchable record after cleanup"
+            />
+          </div>
+          <div className="set-row" style={{ marginTop: 10 }}>
+            <div className="grow">
+              <h3>Keep tiny preview</h3>
+              <p className="muted small" style={{ margin: "0" }}>
+                Show the cached thumbnail on retained records when available.
+              </p>
+            </div>
+            <Toggle
+              checked={keepThumb}
+              onChange={() => void toggleSetting("keep_deleted_thumbnail", !keepThumb, setKeepThumb, keepThumb)}
+              label="Keep tiny preview on retained records"
+            />
           </div>
         </div>
       </section>

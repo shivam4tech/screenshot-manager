@@ -1135,6 +1135,64 @@ select.collection-add { width: 100%; margin-top: 4px; font-size: 12.5px; }
   .cleanup-stats { grid-template-columns: 1fr; }
 }
 
+/* cleanup failures */
+.failures {
+  border: 1px solid var(--danger);
+  background: var(--danger-soft);
+  border-radius: var(--r-lg);
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+.failures-head {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 12.5px; font-weight: 600; color: var(--danger);
+  margin-bottom: 6px;
+}
+.failures ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.failures li { font-size: 12px; overflow-wrap: anywhere; }
+
+/* deleted memories */
+.cleanup-memories {
+  border: 1px solid var(--border-subtle); background: var(--bg-elev);
+  border-radius: var(--r-lg); padding: 14px 16px; margin-top: 12px;
+}
+.mem-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.mem-head h3 { margin: 0 0 2px; font-size: 13.5px; }
+.mem-head p { margin: 0; }
+.mem-filter {
+  width: 100%; margin-bottom: 8px;
+  font-size: 12.5px !important; padding: 7px 10px !important;
+}
+.mem-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 320px; overflow-y: auto; }
+.mem-row {
+  display: flex; align-items: center; gap: 8px;
+  border: 1px solid transparent; border-radius: var(--r-md);
+  padding: 6px 8px;
+}
+.mem-row:hover { background: var(--bg-hover); border-color: var(--border-subtle); }
+.mem-main {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px;
+  background: none; border: none; box-shadow: none; padding: 0;
+  text-align: left; cursor: pointer;
+}
+.memory-panel {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow-lg);
+  width: min(560px, 94vw);
+  max-height: 88vh; overflow-y: auto;
+  padding: 18px 20px;
+  display: flex; flex-direction: column; gap: 12px;
+  animation: panelin 200ms var(--ease);
+}
+.memory-panel .detail-head h3 { font-size: 15px; }
+.memory-thumb {
+  width: 100%; max-height: 260px; object-fit: contain;
+  border-radius: 8px; background: var(--bg-sunken);
+  border: 1px solid var(--border-subtle);
+}
+
 /* ============ REDUCED MOTION ============ */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }

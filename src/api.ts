@@ -218,6 +218,46 @@ export interface CleanupPage {
   rows: CleanupItem[];
 }
 
+export interface CleanupTrashSummary {
+  trashed: number;
+  already_missing: number;
+  failed: DeleteFailure[];
+  memories_retained: number;
+}
+
+export interface DeletedMemory {
+  id: number;
+  screenshot_id: number | null;
+  filename: string;
+  path: string;
+  created_ts: number | null;
+  modified_ts: number | null;
+  deleted_at: string;
+  width: number | null;
+  height: number | null;
+  format: string | null;
+  size: number;
+  content_hash: string | null;
+  phash: string | null;
+  app_name: string | null;
+  website_domain: string | null;
+  url: string | null;
+  category: string | null;
+  starred: boolean;
+  note: string;
+  /** JSON array of tag names snapshotted at deletion time. */
+  tags: string;
+  /** JSON array of collection names snapshotted at deletion time. */
+  collections: string;
+  ocr_text: string;
+  keep_thumbnail: boolean;
+}
+
+export interface DeletedMemoryPage {
+  total: number;
+  rows: DeletedMemory[];
+}
+
 export interface DeleteFailure {
   id: number;
   path: string | null;
@@ -346,6 +386,18 @@ export const api = {
       limit,
       offset,
     }),
+  cleanupCategoryIds: (category: string, ageDays: number, sizeBytes: number) =>
+    invoke<number[]>("cleanup_category_ids", { category, ageDays, sizeBytes }),
+  cleanupTrash: (ids: number[]) =>
+    invoke<CleanupTrashSummary>("cleanup_trash", { ids }),
+  cleanupSizes: (ids: number[]) =>
+    invoke<number>("cleanup_sizes", { ids }),
+  listDeletedMemories: (query: string, limit: number, offset: number) =>
+    invoke<DeletedMemoryPage>("list_deleted_memories", { query, limit, offset }),
+  deleteDeletedMemory: (id: number) =>
+    invoke<boolean>("delete_deleted_memory", { id }),
+  clearDeletedMemories: () =>
+    invoke<number>("clear_deleted_memories"),
   getDataDir: () => invoke<string>("get_data_dir"),
   runClassification: () => invoke<ClassifySummary>("run_classification"),
 };

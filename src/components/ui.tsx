@@ -330,6 +330,22 @@ export function useConfirm() {
   return { confirm, confirmNode: node };
 }
 
+/* ---------- Formatting ---------- */
+
+/** Human-readable byte sizes, used consistently across storage UI. */
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return "—";
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let v = bytes / 1024;
+  let u = 0;
+  while (v >= 1024 && u < units.length - 1) {
+    v /= 1024;
+    u++;
+  }
+  return `${v >= 100 ? Math.round(v) : v.toFixed(1)} ${units[u]}`;
+}
+
 /* ---------- Shortcuts overlay ---------- */
 
 const SHORTCUTS: Array<[string, string]> = [

@@ -6,22 +6,25 @@ import {
   type DuplicateGroup,
 } from "../api";
 import { Icons } from "./icons";
-import { Button, Dropdown, EmptyState, useConfirm } from "./ui";
+import { Button, Dropdown, EmptyState, useConfirm, type ToastAction } from "./ui";
 import { displayName } from "./ScreenshotCard";
 
 const THRESHOLDS = [4, 8, 12];
 
 /**
  * Duplicate manager: exact (byte-identical) and similar (perceptual) groups
- * for review and bulk organization. Never deletes files — actions are tag,
- * star, and add-to-collection across the whole group.
+ * for review and bulk organization. Per-group actions cover tagging,
+ * starring, collecting, and keep-newest trash; a header action applies
+ * keep-newest across every exact group at once (never similar groups).
  */
 export default function Duplicates({
   onOpenDetail,
   onChanged,
+  onNotify,
 }: {
   onOpenDetail: (id: number) => void;
   onChanged: () => void;
+  onNotify?: (msg: string, action?: ToastAction) => void;
 }) {
   const [exact, setExact] = useState<DuplicateGroup[]>([]);
   const [similar, setSimilar] = useState<DuplicateGroup[]>([]);
@@ -111,6 +114,50 @@ export default function Duplicates({
       g.items.slice(1).map((r) => r.id),
       "Duplicates cleared"
     );
+  };
+
+  /** Keep the newest copy in every exact group (never similar groups). */
+  const keepNewestEverywhere = async () => {
+    const groups = exact.filter((g) => g.items.length > 1);
+    if (groups.length === 0) return;
+    const ids = groups.flatMap((g) => g.items.slice(1).map((r) => r.id));
+    const ok = await confirm({
+      title: `Keep newest in ${groups.length} duplicate group${groups.length === 1 ? "" : "s"}?`,
+      body: `${ids.length} older ${ids.length === 1 ? "copy" : "copies"} will move to the OS Trash.\nKeep strategy: newest copy.\n\nSimilar screenshots are never touched by this action.`,
+      confirmLabel: `Trash ${ids.length}`,
+      danger: true,
+    });
+    if (!ok) return;
+    setError(null);
+    try {
+      const s = await api.deleteScreenshots(ids);
+      const gone = ids.filter((id) => !s.failed.some((f) => f.id === id));
+      const bits = [`${s.trashed} trashed`];
+      if (s.already_missing > 0) bits.push(`${s.already_missing} already gone`);
+      if (s.failed.length > 0) bits.push(`${s.failed.length} failed`);
+      setNote(`Kept newest everywhere: ${bits.join(", ")}.`);
+      await reload(threshold);
+      onChanged();
+      if (gone.length > 0) {
+        onNotify?.(
+          `${gone.length} duplicate ${gone.length === 1 ? "copy" : "copies"} moved to Trash.`,
+          {
+            label: "Undo",
+            fn: () => {
+              void api
+                .restoreScreenshots(gone)
+                .then(() => {
+                  reload(threshold).catch(() => {});
+                  onChanged();
+                })
+                .catch((e) => setError(String(e)));
+            },
+          }
+        );
+      }
+    } catch (e) {
+      setError(String(e));
+    }
   };
 
   const renderGroup = (g: DuplicateGroup, gi: number) => {
@@ -271,13 +318,25 @@ export default function Duplicates({
             Similar <span className="side-count">{similar.length}</span>
           </button>
         </div>
-        <Dropdown
-          ariaLabel="Similarity threshold"
-          prefix="Similarity:"
-          value={String(threshold)}
-          onChange={(v) => setThreshold(Number(v))}
-          options={THRESHOLDS.map((t) => ({ value: String(t), label: `≤ ${t} bits` }))}
-        />
+        <span className="toolbar-group">
+          {exact.some((g) => g.items.length > 1) && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => void keepNewestEverywhere()}
+              title="Trash every older copy in all exact groups (similar groups untouched)"
+            >
+              Keep newest everywhere
+            </Button>
+          )}
+          <Dropdown
+            ariaLabel="Similarity threshold"
+            prefix="Similarity:"
+            value={String(threshold)}
+            onChange={(v) => setThreshold(Number(v))}
+            options={THRESHOLDS.map((t) => ({ value: String(t), label: `≤ ${t} bits` }))}
+          />
+        </span>
       </div>
       {note && (
         <p className="muted small" role="status">

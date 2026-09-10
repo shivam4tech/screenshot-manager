@@ -384,6 +384,41 @@ pub fn cleanup_overview(db: &Database) -> CoreResult<CleanupOverview> {    let (
     })
 }
 
+/// WHERE clause + positional args for a review category. Shared by the
+/// paged items query and the select-all id list so both agree exactly.
+fn category_where(
+    category: CleanupCategory,
+    age_days_raw: i64,
+    size_bytes_raw: i64,
+) -> CoreResult<(String, Vec<i64>)> {
+    match category {
+        CleanupCategory::Old => {
+            let age_days = valid_age(age_days_raw)?;
+            Ok((
+                "s.status = 'available'
+                AND COALESCE(s.created_ts, s.modified_ts) IS NOT NULL
+                AND COALESCE(s.created_ts, s.modified_ts) < ?1"
+                    .into(),
+                vec![now_secs() - age_days * 86_400],
+            ))
+        }
+        CleanupCategory::Large => {
+            let min_bytes = valid_size(size_bytes_raw)?;
+            Ok((
+                "s.status = 'available' AND s.size >= ?1".into(),
+                vec![min_bytes],
+            ))
+        }
+        CleanupCategory::NoText => Ok((
+            "s.status = 'available'
+                AND (s.ocr_status <> 'done'
+                     OR TRIM(COALESCE((SELECT o.text FROM ocr_text o WHERE o.screenshot_id = s.id), '')) = '')"
+                .into(),
+            Vec::new(),
+        )),
+    }
+}
+
 /// Paged review items for the old / large / no-text categories.
 pub struct CleanupPage {
     pub total: i64,
@@ -415,30 +450,7 @@ pub fn cleanup_items(
     let sort = CleanupSort::parse(sort_raw)?;
     let limit = limit_raw.clamp(1, 200);
     let offset = offset_raw.max(0);
-
-    let where_clause: String;
-    let mut args: Vec<i64> = Vec::new();
-    match category {
-        CleanupCategory::Old => {
-            let age_days = valid_age(age_days_raw)?;
-            where_clause = "s.status = 'available'
-                AND COALESCE(s.created_ts, s.modified_ts) IS NOT NULL
-                AND COALESCE(s.created_ts, s.modified_ts) < ?1"
-                .into();
-            args.push(now_secs() - age_days * 86_400);
-        }
-        CleanupCategory::Large => {
-            let min_bytes = valid_size(size_bytes_raw)?;
-            where_clause = "s.status = 'available' AND s.size >= ?1".into();
-            args.push(min_bytes);
-        }
-        CleanupCategory::NoText => {
-            where_clause = "s.status = 'available'
-                AND (s.ocr_status <> 'done'
-                     OR TRIM(COALESCE((SELECT o.text FROM ocr_text o WHERE o.screenshot_id = s.id), '')) = '')"
-                .into();
-        }
-    }
+    let (where_clause, mut args) = category_where(category, age_days_raw, size_bytes_raw)?;
 
     let (total, bytes): (i64, i64) = db
         .conn()
@@ -458,13 +470,30 @@ pub fn cleanup_items(
         args.len() + 1,
         args.len() + 2,
     ))?;
-    let mut all_args: Vec<i64> = args;
-    all_args.push(limit);
-    all_args.push(offset);
+    args.push(limit);
+    args.push(offset);
     let rows = stmt
-        .query_map(rusqlite::params_from_iter(all_args.iter()), map_cleanup_item)?
+        .query_map(rusqlite::params_from_iter(args.iter()), map_cleanup_item)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(CleanupPage { total, bytes, rows })
+}
+
+/// Every id in a review category (for select-all across pages).
+pub fn cleanup_category_ids(
+    db: &Database,
+    category_raw: &str,
+    age_days_raw: i64,
+    size_bytes_raw: i64,
+) -> CoreResult<Vec<i64>> {
+    let category = CleanupCategory::parse(category_raw)?;
+    let (where_clause, args) = category_where(category, age_days_raw, size_bytes_raw)?;
+    let mut stmt = db.conn().prepare(&format!(
+        "SELECT s.id FROM screenshots s WHERE {where_clause} ORDER BY s.id"
+    ))?;
+    let rows = stmt
+        .query_map(rusqlite::params_from_iter(args.iter()), |r| r.get(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
 }
 
 #[cfg(test)]
@@ -587,8 +616,17 @@ mod tests {
     }
 
     #[test]
-    fn notext_lists_only_textless_available_files() {
+    fn category_ids_agree_with_paged_totals() {
         let db = fixture();
+        let ids = cleanup_category_ids(&db, "old", 365, 0).unwrap();
+        assert_eq!(ids.len() as i64, 6);
+        let big = cleanup_category_ids(&db, "large", 0, 5_000_000).unwrap();
+        assert_eq!(big.len(), 1);
+        assert!(cleanup_category_ids(&db, "bogus", 0, 0).is_err());
+    }
+
+    #[test]
+    fn notext_lists_only_textless_available_files() {        let db = fixture();
         let page = cleanup_items(&db, "notext", 0, 0, "newest", 10, 0).unwrap();
         assert_eq!(page.total, 1);
         assert_eq!(page.rows[0].filename, "new_tiny.png");

@@ -171,6 +171,37 @@ const MIGRATIONS: &[&str] = &[
     r#"
     ALTER TABLE screenshots ADD COLUMN ocr_attempts INTEGER NOT NULL DEFAULT 0;
     "#,
+    // v4 — optional searchable records of trashed screenshots (Sprint 2).
+    // These are metadata-only memories, never backups: no image bytes are
+    // stored. Thumbnails, if kept, keep living in the content-hash cache.
+    r#"
+    CREATE TABLE deleted_memories (
+        id INTEGER PRIMARY KEY,
+        screenshot_id INTEGER,
+        filename TEXT NOT NULL,
+        path TEXT NOT NULL,
+        created_ts INTEGER,
+        modified_ts INTEGER,
+        deleted_at TEXT NOT NULL DEFAULT (datetime('now')),
+        width INTEGER,
+        height INTEGER,
+        format TEXT,
+        size INTEGER NOT NULL DEFAULT 0,
+        content_hash TEXT,
+        phash TEXT,
+        app_name TEXT,
+        website_domain TEXT,
+        url TEXT,
+        category TEXT,
+        starred INTEGER NOT NULL DEFAULT 0,
+        note TEXT NOT NULL DEFAULT '',
+        tags_json TEXT NOT NULL DEFAULT '[]',
+        collections_json TEXT NOT NULL DEFAULT '[]',
+        ocr_text TEXT NOT NULL DEFAULT '',
+        keep_thumbnail INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX idx_deleted_memories_deleted_at ON deleted_memories(deleted_at);
+    "#,
 ];
 
 /// A configured source directory.
@@ -1359,6 +1390,191 @@ impl Database {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     }
+
+    /// Snapshot one screenshot's user-visible metadata into a deleted-memory
+    /// record. Call after the file was moved to trash. Returns the new id.
+    /// Tags/collections are snapshotted by name (plain JSON arrays) so the
+    /// record stays readable even if those are renamed later.
+    pub fn record_deleted_memory(
+        &self,
+        detail: &ScreenshotDetail,
+        size: i64,
+        keep_thumbnail: bool,
+    ) -> CoreResult<i64> {
+        let collections = self
+            .screenshot_collections(detail.id)?
+            .into_iter()
+            .map(|c| c.name)
+            .collect::<Vec<_>>();
+        self.conn.execute(
+            "INSERT INTO deleted_memories (
+                 screenshot_id, filename, path, created_ts, modified_ts,
+                 width, height, format, size, content_hash, phash,
+                 app_name, website_domain, url, category, starred, note,
+                 tags_json, collections_json, ocr_text, keep_thumbnail
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
+                       ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+            params![
+                detail.id,
+                detail.filename,
+                detail.path,
+                detail.created_ts,
+                detail.modified_ts,
+                detail.width,
+                detail.height,
+                detail.format,
+                size,
+                detail.content_hash,
+                detail.phash,
+                detail.app_name,
+                detail.website_domain,
+                detail.url,
+                detail.category,
+                detail.starred as i64,
+                detail.note,
+                serde_json::to_string(&detail.tags).unwrap_or_else(|_| "[]".into()),
+                serde_json::to_string(&collections).unwrap_or_else(|_| "[]".into()),
+                detail.ocr_text.clone().unwrap_or_default(),
+                keep_thumbnail as i64,
+            ],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Deleted-memory records, newest first, with optional filename/OCR filter.
+    pub fn list_deleted_memories(
+        &self,
+        query: &str,
+        limit: i64,
+        offset: i64,
+    ) -> CoreResult<(i64, Vec<DeletedMemory>)> {
+        let q = query.trim();
+        let total: i64 = if q.is_empty() {
+            self.conn.query_row(
+                "SELECT COUNT(*) FROM deleted_memories",
+                [],
+                |r| r.get(0),
+            )?
+        } else {
+            let filter = "%".to_string() + &q.replace(['%', '_'], " ") + "%";
+            self.conn.query_row(
+                "SELECT COUNT(*) FROM deleted_memories
+                  WHERE filename LIKE ?1 ESCAPE '\\' OR ocr_text LIKE ?1 ESCAPE '\\'",
+                params![filter],
+                |r| r.get(0),
+            )?
+        };
+        let filter = "%".to_string() + &q.replace(['%', '_'], " ") + "%";
+        let mut stmt = if q.is_empty() {
+            self.conn.prepare(
+                "SELECT id, screenshot_id, filename, path, created_ts, modified_ts,
+                        deleted_at, width, height, format, size, content_hash, phash,
+                        app_name, website_domain, url, category, starred, note,
+                        tags_json, collections_json, ocr_text, keep_thumbnail
+                 FROM deleted_memories
+                 ORDER BY deleted_at DESC, id DESC LIMIT ?1 OFFSET ?2",
+            )?
+        } else {
+            self.conn.prepare(
+                "SELECT id, screenshot_id, filename, path, created_ts, modified_ts,
+                        deleted_at, width, height, format, size, content_hash, phash,
+                        app_name, website_domain, url, category, starred, note,
+                        tags_json, collections_json, ocr_text, keep_thumbnail
+                 FROM deleted_memories
+                 WHERE filename LIKE ?1 ESCAPE '\\' OR ocr_text LIKE ?1 ESCAPE '\\'
+                 ORDER BY deleted_at DESC, id DESC LIMIT ?2 OFFSET ?3",
+            )?
+        };
+        let rows = if q.is_empty() {
+            stmt.query_map(
+                params![limit.clamp(1, 200), offset.max(0)],
+                map_deleted_memory_row,
+            )?
+            .collect::<Result<Vec<_>, _>>()?
+        } else {
+            stmt.query_map(
+                params![filter, limit.clamp(1, 200), offset.max(0)],
+                map_deleted_memory_row,
+            )?
+            .collect::<Result<Vec<_>, _>>()?
+        };
+        Ok((total, rows))
+    }
+
+    /// Permanently remove one deleted-memory record (metadata only; the file
+    /// is already in the OS trash or gone).
+    pub fn delete_deleted_memory(&self, id: i64) -> CoreResult<bool> {
+        Ok(self
+            .conn
+            .execute("DELETE FROM deleted_memories WHERE id = ?1", params![id])?
+            > 0)
+    }
+
+    /// Permanently remove all deleted-memory records. Returns rows removed.
+    pub fn clear_deleted_memories(&self) -> CoreResult<i64> {
+        let n = self.conn.execute("DELETE FROM deleted_memories", [])?;
+        Ok(n as i64)
+    }
+}
+
+/// A searchable metadata-only record of a trashed screenshot. Not a backup:
+/// no image bytes are stored. `content_hash` lets the UI reuse the thumbnail
+/// cache when `keep_thumbnail` was enabled at deletion time.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DeletedMemory {
+    pub id: i64,
+    pub screenshot_id: Option<i64>,
+    pub filename: String,
+    pub path: String,
+    pub created_ts: Option<i64>,
+    pub modified_ts: Option<i64>,
+    pub deleted_at: String,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+    pub format: Option<String>,
+    pub size: i64,
+    pub content_hash: Option<String>,
+    pub phash: Option<String>,
+    pub app_name: Option<String>,
+    pub website_domain: Option<String>,
+    pub url: Option<String>,
+    pub category: Option<String>,
+    pub starred: bool,
+    pub note: String,
+    /// JSON array of tag names snapshotted at deletion time.
+    pub tags: String,
+    /// JSON array of collection names snapshotted at deletion time.
+    pub collections: String,
+    pub ocr_text: String,
+    pub keep_thumbnail: bool,
+}
+
+fn map_deleted_memory_row(r: &rusqlite::Row) -> rusqlite::Result<DeletedMemory> {
+    Ok(DeletedMemory {
+        id: r.get(0)?,
+        screenshot_id: r.get(1)?,
+        filename: r.get(2)?,
+        path: r.get(3)?,
+        created_ts: r.get(4)?,
+        modified_ts: r.get(5)?,
+        deleted_at: r.get(6)?,
+        width: r.get(7)?,
+        height: r.get(8)?,
+        format: r.get(9)?,
+        size: r.get(10)?,
+        content_hash: r.get(11)?,
+        phash: r.get(12)?,
+        app_name: r.get(13)?,
+        website_domain: r.get(14)?,
+        url: r.get(15)?,
+        category: r.get(16)?,
+        starred: r.get::<_, i64>(17)? != 0,
+        note: r.get(18)?,
+        tags: r.get(19)?,
+        collections: r.get(20)?,
+        ocr_text: r.get(21)?,
+        keep_thumbnail: r.get::<_, i64>(22)? != 0,
+    })
 }
 
 /// Normalize a path for storage: absolute and lexically cleaned. Does not

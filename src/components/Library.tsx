@@ -1024,7 +1024,11 @@ export default function Library({
           view.kind === "timeline" ? (
             <Timeline onOpenDetail={(id) => setDetailId(id)} />
           ) : view.kind === "duplicates" ? (
-            <Duplicates onOpenDetail={(id) => setDetailId(id)} onChanged={refreshOrganize} />
+            <Duplicates
+              onOpenDetail={(id) => setDetailId(id)}
+              onChanged={refreshOrganize}
+              onNotify={(msg, action) => toast(msg, action)}
+            />
           ) : view.kind === "bursts" ? (
             <Bursts
               onOpenDetail={(id) => setDetailId(id)}
@@ -1038,6 +1042,7 @@ export default function Library({
                 setQuery("");
                 setView({ kind });
               }}
+              onNotify={(msg, action) => toast(msg, action)}
             />
           ) : (
             <Settings

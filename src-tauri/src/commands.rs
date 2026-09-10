@@ -585,6 +585,84 @@ pub fn cleanup_items(
     .map_err(|e| e.to_string())
 }
 
+fn cleanup_flag(db: &shotmemory_core::db::Database, key: &str) -> bool {
+    db.get_setting(key)
+        .map(|v| v.as_deref() == Some("1"))
+        .unwrap_or(false)
+}
+
+/// Reviewed bulk trash for the Cleanup flow. Moves files with the OS trash,
+/// marks records missing, and — only when the `keep_deleted_memory` setting
+/// is on — snapshots searchable metadata records (never image bytes).
+/// Per-id results; nothing is claimed until the filesystem op succeeds.
+#[tauri::command]
+pub fn cleanup_trash(
+    state: State<AppState>,
+    ids: Vec<i64>,
+) -> Result<shotmemory_core::cleanup::CleanupTrashSummary, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let keep_memory = cleanup_flag(&db, "keep_deleted_memory");
+    let keep_thumbnail = keep_memory && cleanup_flag(&db, "keep_deleted_thumbnail");
+    shotmemory_core::cleanup::cleanup_trash(&db, &ids, keep_memory, keep_thumbnail)
+        .map_err(|e| e.to_string())
+}
+
+/// Every id in a cleanup review category (select-all across pages).
+#[tauri::command]
+pub fn cleanup_category_ids(
+    state: State<AppState>,
+    category: String,
+    age_days: i64,
+    size_bytes: i64,
+) -> Result<Vec<i64>, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    shotmemory_core::cleanup_analysis::cleanup_category_ids(&db, &category, age_days, size_bytes)
+        .map_err(|e| e.to_string())
+}
+
+/// Total stored bytes for selected ids (pre-confirmation estimates).
+#[tauri::command]
+pub fn cleanup_sizes(state: State<AppState>, ids: Vec<i64>) -> Result<i64, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    shotmemory_core::cleanup::selection_bytes(&db, &ids).map_err(|e| e.to_string())
+}
+
+/// Deleted-memory records, newest first, with filename/OCR filter.
+#[tauri::command]
+pub fn list_deleted_memories(
+    state: State<AppState>,
+    query: String,
+    limit: i64,
+    offset: i64,
+) -> Result<DeletedMemoryPage, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let (total, rows) = db
+        .list_deleted_memories(&query, limit, offset)
+        .map_err(|e| e.to_string())?;
+    Ok(DeletedMemoryPage { total, rows })
+}
+
+/// Permanently remove one deleted-memory record (metadata only).
+#[tauri::command]
+pub fn delete_deleted_memory(state: State<AppState>, id: i64) -> Result<bool, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.delete_deleted_memory(id).map_err(|e| e.to_string())
+}
+
+/// Permanently remove all deleted-memory records. Returns rows removed.
+#[tauri::command]
+pub fn clear_deleted_memories(state: State<AppState>) -> Result<i64, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.clear_deleted_memories().map_err(|e| e.to_string())
+}
+
+/// One page of deleted-memory records.
+#[derive(Serialize)]
+pub struct DeletedMemoryPage {
+    pub total: i64,
+    pub rows: Vec<shotmemory_core::db::DeletedMemory>,
+}
+
 /// Path to the local data directory (database + thumbnails) for About.
 /// Shown so users know exactly where their data lives.
 #[tauri::command]
