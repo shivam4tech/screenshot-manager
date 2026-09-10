@@ -174,6 +174,50 @@ export interface Burst {
   preview_hashes: Array<string | null>;
 }
 
+export interface CleanupItem {
+  id: number;
+  path: string;
+  filename: string;
+  size: number;
+  created_ts: number | null;
+  width: number | null;
+  height: number | null;
+  format: string | null;
+  content_hash: string | null;
+  starred: boolean;
+}
+
+export interface CategoryStat {
+  count: number;
+  bytes: number;
+}
+
+export interface CleanupOverview {
+  total_count: number;
+  total_bytes: number;
+  exact_groups: number;
+  exact_count: number;
+  exact_reclaim_bytes: number;
+  near_groups: number;
+  near_count: number;
+  near_candidate_bytes: number;
+  burst_groups: number;
+  burst_count: number;
+  burst_bytes: number;
+  old: CategoryStat;
+  old_age_days: number;
+  large: CategoryStat;
+  large_min_bytes: number;
+  notext: CategoryStat;
+  analyzed_at: string;
+}
+
+export interface CleanupPage {
+  total: number;
+  bytes: number;
+  rows: CleanupItem[];
+}
+
 export interface DeleteFailure {
   id: number;
   path: string | null;
@@ -292,6 +336,16 @@ export const api = {
     invoke<ScreenshotRow[]>("burst_items", { startTs, endTs, limit, offset }),
   listProblems: (limit: number) => invoke<Problem[]>("list_problems", { limit }),
   clearProblems: () => invoke<void>("clear_problems"),
+  cleanupOverview: () => invoke<CleanupOverview>("cleanup_overview"),
+  cleanupItems: (category: string, ageDays: number, sizeBytes: number, sort: string, limit: number, offset: number) =>
+    invoke<CleanupPage>("cleanup_items", {
+      category,
+      ageDays,
+      sizeBytes,
+      sort,
+      limit,
+      offset,
+    }),
   getDataDir: () => invoke<string>("get_data_dir"),
   runClassification: () => invoke<ClassifySummary>("run_classification"),
 };

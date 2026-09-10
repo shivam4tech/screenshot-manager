@@ -22,6 +22,7 @@
 pub mod db;
 pub mod classify;
 pub mod cleanup;
+pub mod cleanup_analysis;
 pub mod error;
 pub mod hashing;
 pub mod insights;

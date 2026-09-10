@@ -114,6 +114,8 @@ fn main() {
             commands::add_many_to_collection,
             commands::delete_screenshots,
             commands::restore_screenshots,
+            commands::cleanup_overview,
+            commands::cleanup_items,
             commands::timeline_months,
             commands::timeline_days,
             commands::timeline_items,

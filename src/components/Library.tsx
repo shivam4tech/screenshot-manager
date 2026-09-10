@@ -14,6 +14,7 @@ import Timeline from "./Timeline";
 import Duplicates from "./Duplicates";
 import Settings from "./Settings";
 import Bursts from "./Bursts";
+import Cleanup from "./Cleanup";
 import Cull from "./Cull";
 import { BulkBar, useSelection } from "./bulk";
 import { useInfiniteLoader } from "./scroll";
@@ -33,6 +34,7 @@ type View =
   | { kind: "timeline" }
   | { kind: "duplicates" }
   | { kind: "bursts" }
+  | { kind: "cleanup" }
   | { kind: "settings" };
 
 type ViewMode = "grid" | "list";
@@ -83,6 +85,7 @@ const NAV: Array<{ kind: View["kind"]; label: string; icon: IconName; title: str
   { kind: "timeline", label: "Timeline", icon: "clock", title: "Browse by capture date" },
   { kind: "duplicates", label: "Duplicates", icon: "copy", title: "Review exact and similar duplicates" },
   { kind: "bursts", label: "Bursts", icon: "zap", title: "Capture-time clusters with theme hints" },
+  { kind: "cleanup", label: "Cleanup", icon: "drive", title: "Review what's taking space" },
   { kind: "settings", label: "Settings", icon: "settings", title: "Appearance, OCR, enrichment, index health" },
 ];
 
@@ -263,6 +266,7 @@ export default function Library({
     (view.kind === "timeline" ||
       view.kind === "duplicates" ||
       view.kind === "bursts" ||
+      view.kind === "cleanup" ||
       view.kind === "settings");
 
   // Selection never survives a context switch.
@@ -599,6 +603,7 @@ export default function Library({
     view.kind === "timeline" ? "Timeline" :
     view.kind === "duplicates" ? "Duplicates" :
     view.kind === "bursts" ? "Bursts" :
+    view.kind === "cleanup" ? "Cleanup" :
     view.kind === "settings" ? "Settings" : "All Screenshots";
   const starredActive = hasFlag(activeQuery, "is:starred");
   const isStarredView = activeQuery.trim() === "is:starred";
@@ -1025,6 +1030,14 @@ export default function Library({
               onOpenDetail={(id) => setDetailId(id)}
               collections={collections}
               refreshOrganize={refreshOrganize}
+            />
+          ) : view.kind === "cleanup" ? (
+            <Cleanup
+              onOpenDetail={(id) => setDetailId(id)}
+              onNavigate={(kind) => {
+                setQuery("");
+                setView({ kind });
+              }}
             />
           ) : (
             <Settings

@@ -14,6 +14,7 @@ use shotmemory_core::db::{
     CollectionInfo, Database, LibraryStats, Problem, ScreenshotDetail, ScreenshotRow, TagInfo,
 };
 use shotmemory_core::insights::{Burst, DuplicateGroup, TimelineDay, TimelineMonth};
+use shotmemory_core::cleanup_analysis::{CleanupOverview, CleanupPage};
 use shotmemory_core::ocr::{OcrConfig, OcrPipeline, OcrProgress, OcrSummary, TesseractEngine};
 use shotmemory_core::platform;
 use shotmemory_core::scanner::{ScanProgress, ScanSummary, Scanner};
@@ -545,6 +546,43 @@ pub fn restore_screenshots(
 ) -> Result<shotmemory_core::cleanup::RestoreSummary, String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
     shotmemory_core::cleanup::restore_screenshots(&db, &ids).map_err(|e| e.to_string())
+}
+
+// ---- Disk cleanup analysis (Sprint 1: read-only) -------------------------------
+// Aggregates and review lists computed from indexed metadata. Nothing here
+// touches the filesystem.
+
+/// Whole-library cleanup overview: totals plus per-category counts.
+#[tauri::command]
+pub fn cleanup_overview(state: State<AppState>) -> Result<CleanupOverview, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    shotmemory_core::cleanup_analysis::cleanup_overview(&db).map_err(|e| e.to_string())
+}
+
+/// Paged review items for one cleanup category (old, large, notext).
+/// Parameters are allowlisted server-side; bursts/duplicates reuse their
+/// existing review surfaces.
+#[tauri::command]
+pub fn cleanup_items(
+    state: State<AppState>,
+    category: String,
+    age_days: i64,
+    size_bytes: i64,
+    sort: String,
+    limit: i64,
+    offset: i64,
+) -> Result<CleanupPage, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    shotmemory_core::cleanup_analysis::cleanup_items(
+        &db,
+        &category,
+        age_days,
+        size_bytes,
+        &sort,
+        limit,
+        offset,
+    )
+    .map_err(|e| e.to_string())
 }
 
 /// Path to the local data directory (database + thumbnails) for About.
