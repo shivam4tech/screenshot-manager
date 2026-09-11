@@ -8,6 +8,7 @@ import {
   type DeletedMemory,
 } from "../api";
 import { BulkBar, useSelection } from "./bulk";
+import type { AppliedRename } from "./RenameDialog";
 import { ScreenshotCard } from "./ScreenshotCard";
 import { useInfiniteLoader } from "./scroll";
 import { Button, Dropdown, EmptyState, formatBytes, useConfirm, type ToastAction } from "./ui";
@@ -309,6 +310,30 @@ export default function Cleanup({
     return { gone, note };
   };
 
+  const undoRename = async (applied: AppliedRename[]) => {
+    try {
+      const out = await api.renameExecute(
+        applied.map((a) => ({ id: a.id, new_path: a.old_path }))
+      );
+      refreshOverview();
+      if (review) loadItems(review, 0).catch(() => {});
+      const bits = [`restored ${out.renamed} original name${out.renamed === 1 ? "" : "s"}`];
+      if (out.failed > 0) bits.push(`${out.failed} could not be restored (name taken?)`);
+      onNotify(bits.join(", ") + ".");
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const handleRenamed = (applied: AppliedRename[]) => {
+    refreshOverview();
+    if (review) loadItems(review, 0).catch(() => {});
+    onNotify(`Renamed ${applied.length} screenshot${applied.length === 1 ? "" : "s"}.`, {
+      label: "Undo",
+      fn: () => void undoRename(applied),
+    });
+  };
+
   const afterBulk = (removedIds: number[]) => {
     if (removedIds.length > 0) {
       const gone = new Set(removedIds);
@@ -432,6 +457,7 @@ export default function Cleanup({
             selectionBytes={sel.selected.size > 0 ? estBytes : null}
             confirmTitle={`Move ${sel.selected.size} screenshot${sel.selected.size === 1 ? "" : "s"} to Trash?`}
             confirmBody={`${formatBytes(estBytes)} selected\n\nThese files will be moved using the operating system's Trash / Recycle Bin.`}
+            onRenamed={handleRenamed}
           />
         </div>
         {failures.length > 0 && (

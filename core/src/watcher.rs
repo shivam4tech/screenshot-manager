@@ -192,6 +192,11 @@ fn record_event(kind: &EventKind, paths: &[PathBuf], pending: &mut HashMap<PathB
 
 fn handle_event(db: &Database, scanner: &Scanner, path: &Path, kind: Kind) {
     let normalized = crate::db::normalize_path(path);
+    // Our own in-flight renames are journaled: skip them so a managed
+    // rename is never misread as delete + unrelated import.
+    if db.is_rename_pending(&normalized).unwrap_or(false) {
+        return;
+    }
     match kind {
         Kind::Removed => {
             if let Ok(n) = db.mark_missing_by_path(&normalized) {
@@ -257,8 +262,7 @@ mod tests {
         while Instant::now() < deadline {
             if f() {
                 return true;
-            }
-            std::thread::sleep(Duration::from_millis(150));
+            }            std::thread::sleep(Duration::from_millis(150));
         }
         f()
     }
@@ -358,5 +362,42 @@ mod tests {
         assert_eq!(db2.list_screenshots(10, 0).unwrap().len(), 0);
         let _ = NewScreenshot::default();
         let _ = AtomicBool::new(false);
+    }
+
+    #[test]
+    fn journaled_rename_events_are_skipped() {
+        use crate::scanner::Scanner;
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open_in_memory().unwrap();
+        let old = tmp.path().join("old.png");
+        std::fs::write(&old, b"fake-image-bytes").unwrap();
+        let id = db
+            .insert_screenshot(&NewScreenshot {
+                path: old.to_string_lossy().into_owned(),
+                filename: "old.png".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        let new_path = tmp.path().join("new.png");
+        db.journal_rename(
+            "b1",
+            id,
+            &old.to_string_lossy(),
+            &new_path.to_string_lossy(),
+            None,
+        )
+        .unwrap();
+        let scanner = Scanner::new(&db, tmp.path().join("thumbs"));
+
+        // Removal of a journaled old path must not mark the record missing.
+        handle_event(&db, &scanner, &old, Kind::Removed);
+        let d = db.get_screenshot_detail(id).unwrap().unwrap();
+        assert_eq!(d.status, crate::db::STATUS_AVAILABLE);
+
+        // Control: without the journal, the same event marks it missing.
+        db.journal_clear_batch("b1").unwrap();
+        handle_event(&db, &scanner, &old, Kind::Removed);
+        let d = db.get_screenshot_detail(id).unwrap().unwrap();
+        assert_eq!(d.status, crate::db::STATUS_MISSING);
     }
 }

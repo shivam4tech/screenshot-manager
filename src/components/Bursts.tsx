@@ -7,6 +7,7 @@ import {
   type ScreenshotRow,
 } from "../api";
 import { BulkBar, useSelection } from "./bulk";
+import type { AppliedRename } from "./RenameDialog";
 import { useInfiniteLoader } from "./scroll";
 import { Icons } from "./icons";
 import { Button, Dropdown, ToastStack, useToasts } from "./ui";
@@ -177,6 +178,30 @@ export default function Bursts({
     }
   };
 
+  const undoRename = async (applied: AppliedRename[]) => {
+    try {
+      const out = await api.renameExecute(
+        applied.map((a) => ({ id: a.id, new_path: a.old_path }))
+      );
+      reload();
+      refreshOrganize();
+      const bits = [`restored ${out.renamed} original name${out.renamed === 1 ? "" : "s"}`];
+      if (out.failed > 0) bits.push(`${out.failed} could not be restored (name taken?)`);
+      toast(bits.join(", ") + ".");
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const handleRenamed = (applied: AppliedRename[]) => {
+    reload();
+    refreshOrganize();
+    toast(`Renamed ${applied.length} screenshot${applied.length === 1 ? "" : "s"}.`, {
+      label: "Undo",
+      fn: () => void undoRename(applied),
+    });
+  };
+
   const afterBulk = (removedIds: number[]) => {
     if (removedIds.length > 0) {
       setItems((rows) => rows.filter((r) => !removedIds.includes(r.id)));
@@ -294,6 +319,7 @@ export default function Bursts({
                   onSelectAll={() => void selectAllInBurst()}
                   onCancel={() => sel.clear()}
                   trashHotkeyRef={trashHotkeyRef}
+                  onRenamed={handleRenamed}
                 />
                 <div className="shot-grid">
                   {items.map((r) => (

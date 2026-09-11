@@ -258,6 +258,51 @@ export interface DeletedMemoryPage {
   rows: DeletedMemory[];
 }
 
+export interface RenameOptions {
+  pattern: string;
+  counter_start: number;
+  padding: number;
+  order: string;
+  strategy: string;
+}
+
+export interface RenameEntry {
+  id: number;
+  old_path: string;
+  new_path: string;
+  status: string;
+  message: string;
+  sanitized: boolean;
+}
+
+export interface RenamePlan {
+  entries: RenameEntry[];
+  dirs: string[];
+  order: string;
+  strategy: string;
+}
+
+export interface RenameTarget {
+  id: number;
+  new_path: string;
+}
+
+export interface RenameResult {
+  id: number;
+  old_path: string;
+  new_path: string;
+  ok: boolean;
+  message: string;
+}
+
+export interface RenameOutcome {
+  renamed: number;
+  skipped: number;
+  failed: number;
+  rolled_back: number;
+  results: RenameResult[];
+}
+
 export interface DeleteFailure {
   id: number;
   path: string | null;
@@ -398,6 +443,10 @@ export const api = {
     invoke<boolean>("delete_deleted_memory", { id }),
   clearDeletedMemories: () =>
     invoke<number>("clear_deleted_memories"),
+  renamePreview: (ids: number[], options: RenameOptions) =>
+    invoke<RenamePlan>("rename_preview", { ids, options }),
+  renameExecute: (targets: RenameTarget[]) =>
+    invoke<RenameOutcome>("rename_execute", { targets }),
   getDataDir: () => invoke<string>("get_data_dir"),
   runClassification: () => invoke<ClassifySummary>("run_classification"),
 };

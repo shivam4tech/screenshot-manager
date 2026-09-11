@@ -202,6 +202,22 @@ const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX idx_deleted_memories_deleted_at ON deleted_memories(deleted_at);
     "#,
+    // v5 — rename journal for managed bulk renames (Sprint 3). Lets the file
+    // watcher tell our own in-flight renames apart from external changes so
+    // a rename is never misread as delete + unrelated import.
+    r#"
+    CREATE TABLE rename_journal (
+        id INTEGER PRIMARY KEY,
+        batch_id TEXT NOT NULL,
+        screenshot_id INTEGER NOT NULL,
+        old_path TEXT NOT NULL,
+        new_path TEXT NOT NULL,
+        temp_path TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX idx_rename_journal_paths
+        ON rename_journal(old_path, new_path, temp_path);
+    "#,
 ];
 
 /// A configured source directory.
@@ -1515,6 +1531,107 @@ impl Database {
         let n = self.conn.execute("DELETE FROM deleted_memories", [])?;
         Ok(n as i64)
     }
+
+    /// Point a record at its new location after a managed rename. Filename
+    /// (and therefore the FTS trigger) follows the path; content-derived
+    /// data (hashes, OCR, thumbnails) is untouched — renaming never alters
+    /// image bytes.
+    pub fn update_renamed_path(
+        &self,
+        id: i64,
+        new_path: &str,
+        new_filename: &str,
+        size: i64,
+        modified_ts: Option<i64>,
+    ) -> CoreResult<()> {
+        self.conn.execute(
+            "UPDATE screenshots SET path = ?2, filename = ?3, size = ?4,
+                    modified_ts = ?5, last_verified_at = datetime('now')
+             WHERE id = ?1",
+            params![id, new_path, new_filename, size, modified_ts],
+        )?;
+        Ok(())
+    }
+
+    /// Record one leg of an in-flight managed rename batch.
+    pub fn journal_rename(
+        &self,
+        batch_id: &str,
+        screenshot_id: i64,
+        old_path: &str,
+        new_path: &str,
+        temp_path: Option<&str>,
+    ) -> CoreResult<()> {
+        self.conn.execute(
+            "INSERT INTO rename_journal
+                 (batch_id, screenshot_id, old_path, new_path, temp_path)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![batch_id, screenshot_id, old_path, new_path, temp_path],
+        )?;
+        Ok(())
+    }
+
+    /// Forget a finished batch's journal rows.
+    pub fn journal_clear_batch(&self, batch_id: &str) -> CoreResult<()> {
+        self.conn.execute(
+            "DELETE FROM rename_journal WHERE batch_id = ?1",
+            params![batch_id],
+        )?;
+        Ok(())
+    }
+
+    /// Journal rows older than the given UTC cutoff (for crash recovery).
+    pub fn journal_stale(&self, older_than_utc: &str) -> CoreResult<Vec<JournalEntry>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, batch_id, screenshot_id, old_path, new_path, temp_path, created_at
+             FROM rename_journal WHERE created_at < ?1 ORDER BY id",
+        )?;
+        let rows: Vec<JournalEntry> = stmt
+            .query_map(params![older_than_utc], |r| {
+                Ok(JournalEntry {
+                    id: r.get(0)?,
+                    batch_id: r.get(1)?,
+                    screenshot_id: r.get(2)?,
+                    old_path: r.get(3)?,
+                    new_path: r.get(4)?,
+                    temp_path: r.get(5)?,
+                    created_at: r.get(6)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn journal_delete(&self, id: i64) -> CoreResult<()> {
+        self.conn
+            .execute("DELETE FROM rename_journal WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    /// True when the path belongs to any in-flight managed rename (as old,
+    /// new, or temp path). The watcher uses this to skip its own renames so
+    /// they are never misread as delete + unrelated import.
+    pub fn is_rename_pending(&self, path: &str) -> CoreResult<bool> {
+        Ok(self.conn.query_row(
+            "SELECT 1 FROM rename_journal
+             WHERE old_path = ?1 OR new_path = ?1 OR temp_path = ?1 LIMIT 1",
+            params![path],
+            |_| Ok(true),
+        ).optional()?.unwrap_or(false))
+    }
+}
+
+/// One leg of a managed rename batch, for watcher correlation and crash
+/// recovery. `temp_path` is set only when two-phase moves were needed.
+#[derive(Debug, Clone)]
+pub struct JournalEntry {
+    pub id: i64,
+    pub batch_id: String,
+    pub screenshot_id: i64,
+    pub old_path: String,
+    pub new_path: String,
+    pub temp_path: Option<String>,
+    pub created_at: String,
 }
 
 /// A searchable metadata-only record of a trashed screenshot. Not a backup:

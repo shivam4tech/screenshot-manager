@@ -17,6 +17,7 @@ import Bursts from "./Bursts";
 import Cleanup from "./Cleanup";
 import Cull from "./Cull";
 import { BulkBar, useSelection } from "./bulk";
+import type { AppliedRename } from "./RenameDialog";
 import { useInfiniteLoader } from "./scroll";
 import { Icons, type IconName } from "./icons";
 import { Button, CountBadge, Dropdown, EmptyState, IconButton, SearchBar, ShortcutsOverlay, ToastStack, Toggle, useConfirm, useToasts } from "./ui";
@@ -373,6 +374,31 @@ export default function Library({
       setOrganizeError(String(e));
     }
   }, [refreshAfterChange, sel, toast]);
+
+  /** Undo the most recent rename batch (session-scoped). Reversed pairs go
+      through the same validation, so an occupied former name fails safely
+      instead of overwriting. */
+  const undoRename = useCallback(async (applied: AppliedRename[]) => {
+    try {
+      const out = await api.renameExecute(
+        applied.map((a) => ({ id: a.id, new_path: a.old_path }))
+      );
+      refreshAfterChange();
+      const bits = [`restored ${out.renamed} original name${out.renamed === 1 ? "" : "s"}`];
+      if (out.failed > 0) bits.push(`${out.failed} could not be restored (name taken?)`);
+      toast(bits.join(", ") + ".");
+    } catch (e) {
+      setOrganizeError(String(e));
+    }
+  }, [refreshAfterChange, toast]);
+
+  const handleRenamed = useCallback((applied: AppliedRename[]) => {
+    refreshAfterChange();
+    toast(`Renamed ${applied.length} screenshot${applied.length === 1 ? "" : "s"}.`, {
+      label: "Undo",
+      fn: () => void undoRename(applied),
+    });
+  }, [refreshAfterChange, toast, undoRename]);
 
   /** After a bulk action: drop trashed rows, clear selection, refresh counts. */
   const afterBulk = useCallback(
@@ -1015,8 +1041,9 @@ export default function Library({
               selectingAll={selectingAll}
               onSelectAll={() => void selectAllTotal()}
               onCancel={() => sel.clear()}
-                trashHotkeyRef={trashHotkeyRef}
-              />
+              trashHotkeyRef={trashHotkeyRef}
+              onRenamed={handleRenamed}
+            />
             </div>
           )}
 

@@ -29,6 +29,7 @@ pub mod insights;
 pub mod metadata;
 pub mod ocr;
 pub mod platform;
+pub mod rename;
 pub mod scanner;
 pub mod search;
 pub mod thumbnails;

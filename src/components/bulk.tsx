@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api, type CollectionInfo } from "../api";
 import { Dropdown, formatBytes, useConfirm } from "./ui";
+import RenameDialog, { type AppliedRename } from "./RenameDialog";
 
 /** Selection state shared by every grid (library, bursts, timeline...). */
 export function useSelection() {
@@ -47,6 +48,7 @@ export function BulkBar({
   selectionBytes,
   confirmTitle,
   confirmBody,
+  onRenamed,
 }: {
   ids: number[];
   collections: CollectionInfo[];
@@ -68,12 +70,19 @@ export function BulkBar({
   selectionBytes?: number | null;
   confirmTitle?: string;
   confirmBody?: string;
+  /**
+   * Called with successfully renamed entries (old/new paths) so parents can
+   * refresh, summarize, and offer session Undo. When absent the Rename
+   * action is hidden.
+   */
+  onRenamed?: (applied: AppliedRename[]) => void;
 }) {
   const [target, setTarget] = useState("");
   const [newName, setNewName] = useState("");
   const [tag, setTag] = useState("");
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState(false);
   const { confirm, confirmNode } = useConfirm();
 
   const run = async (label: string, fn: () => Promise<number[]>) => {
@@ -217,6 +226,16 @@ export function BulkBar({
       <button className="btn btn-sm" disabled={busy} onClick={() => void starAll()} title="Star all selected">
         ★ Star
       </button>
+      {onRenamed && (
+        <button
+          className="btn btn-sm"
+          disabled={busy}
+          onClick={() => setRenaming(true)}
+          title="Rename selected screenshots with a template"
+        >
+          ✎ Rename
+        </button>
+      )}
       <button
         disabled={busy}
         className="btn btn-sm btn-danger"
@@ -243,6 +262,16 @@ export function BulkBar({
       )}
     </div>
     {confirmNode}
+    {renaming && onRenamed && (
+      <RenameDialog
+        ids={ids}
+        onClose={() => setRenaming(false)}
+        onDone={(applied) => {
+          setRenaming(false);
+          if (applied.length > 0) onRenamed(applied);
+        }}
+      />
+    )}
     </>
   );
 }

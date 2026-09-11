@@ -122,6 +122,8 @@ fn main() {
             commands::list_deleted_memories,
             commands::delete_deleted_memory,
             commands::clear_deleted_memories,
+            commands::rename_preview,
+            commands::rename_execute,
             commands::timeline_months,
             commands::timeline_days,
             commands::timeline_items,

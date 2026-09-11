@@ -14,8 +14,7 @@ use shotmemory_core::db::{
     CollectionInfo, Database, LibraryStats, Problem, ScreenshotDetail, ScreenshotRow, TagInfo,
 };
 use shotmemory_core::insights::{Burst, DuplicateGroup, TimelineDay, TimelineMonth};
-use shotmemory_core::cleanup_analysis::{CleanupOverview, CleanupPage};
-use shotmemory_core::ocr::{OcrConfig, OcrPipeline, OcrProgress, OcrSummary, TesseractEngine};
+use shotmemory_core::cleanup_analysis::{CleanupOverview, CleanupPage};use shotmemory_core::ocr::{OcrConfig, OcrPipeline, OcrProgress, OcrSummary, TesseractEngine};
 use shotmemory_core::platform;
 use shotmemory_core::scanner::{ScanProgress, ScanSummary, Scanner};
 use shotmemory_core::search::{SearchOutcome, Searcher};
@@ -661,6 +660,33 @@ pub fn clear_deleted_memories(state: State<AppState>) -> Result<i64, String> {
 pub struct DeletedMemoryPage {
     pub total: i64,
     pub rows: Vec<shotmemory_core::db::DeletedMemory>,
+}
+
+// ---- Safe bulk rename (Sprint 3) ------------------------------------------------
+// Template preview is pure computation; execution journals every leg so the
+// file watcher never misreads our own renames, updates records only after
+// files move, and stops + reports (with best-effort reversal) on failure.
+
+/// Preview a bulk rename without touching the filesystem.
+#[tauri::command]
+pub fn rename_preview(
+    state: State<AppState>,
+    ids: Vec<i64>,
+    options: shotmemory_core::rename::RenameOptions,
+) -> Result<shotmemory_core::rename::RenamePlan, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    shotmemory_core::rename::rename_preview(&db, &ids, &options).map_err(|e| e.to_string())
+}
+
+/// Execute explicit rename targets (normally round-tripped through preview).
+/// Re-validates everything; never overwrites; reports per-file results.
+#[tauri::command]
+pub fn rename_execute(
+    state: State<AppState>,
+    targets: Vec<shotmemory_core::rename::RenameTarget>,
+) -> Result<shotmemory_core::rename::RenameOutcome, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    shotmemory_core::rename::rename_execute(&db, &targets).map_err(|e| e.to_string())
 }
 
 /// Path to the local data directory (database + thumbnails) for About.
