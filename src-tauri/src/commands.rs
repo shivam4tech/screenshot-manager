@@ -689,6 +689,99 @@ pub fn rename_execute(
     shotmemory_core::rename::rename_execute(&db, &targets).map_err(|e| e.to_string())
 }
 
+// ---- Suggested labeling (Tier 0 + Tier 1, local signals only) ------------------
+// Scores unfiled screenshots against existing collections/tags and clusters
+// leftovers into named proposals. Every suggestion needs one user click.
+
+/// Tier 0 suggestions for one screenshot.
+#[tauri::command]
+pub fn suggest_for_screenshot(
+    state: State<AppState>,
+    id: i64,
+) -> Result<shotmemory_core::suggest::ShotSuggestions, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    shotmemory_core::suggest::suggest_for_screenshot(&db, id).map_err(|e| e.to_string())
+}
+
+/// Sidebar/banner overview: Tier 1 proposals plus Tier 0 coverage.
+#[tauri::command]
+pub fn suggestion_overview(
+    state: State<AppState>,
+) -> Result<shotmemory_core::suggest::SuggestOverview, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    shotmemory_core::suggest::suggestion_overview(&db).map_err(|e| e.to_string())
+}
+
+/// Log a suggestion accept/dismiss (also future training data).
+#[tauri::command]
+pub fn record_suggestion_feedback(
+    state: State<AppState>,
+    screenshot_id: Option<i64>,
+    target: String,
+    action: String,
+) -> Result<(), String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    db.record_feedback(screenshot_id, &target, &action)
+        .map_err(|e| e.to_string())
+}
+
+/// Accept a collection suggestion (membership recorded as suggested).
+#[tauri::command]
+pub fn accept_collection_suggestion(
+    state: State<AppState>,
+    screenshot_id: i64,
+    collection_id: i64,
+) -> Result<bool, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let added = db
+        .add_many_to_collection_with_origin(collection_id, &[screenshot_id], "suggested")
+        .map_err(|e| e.to_string())?;
+    db.record_feedback(Some(screenshot_id), &format!("collection:{collection_id}"), "accept")
+        .map_err(|e| e.to_string())?;
+    Ok(added > 0)
+}
+
+/// Accept a tag suggestion (recorded as suggested).
+#[tauri::command]
+pub fn accept_tag_suggestion(
+    state: State<AppState>,
+    screenshot_id: i64,
+    name: String,
+) -> Result<bool, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let added = db
+        .add_tag_with_origin(screenshot_id, &name, "suggested")
+        .map_err(|e| e.to_string())?;
+    db.record_feedback(Some(screenshot_id), &format!("tag:{name}"), "accept")
+        .map_err(|e| e.to_string())?;
+    Ok(added)
+}
+
+/// Create a collection from a verified proposal and file its members.
+/// The collection is marked auto with the proposal rule snapshotted.
+#[tauri::command]
+pub fn create_proposed_collection(
+    state: State<AppState>,
+    name: String,
+    screenshot_ids: Vec<i64>,
+    rule_json: String,
+    proposal_key: String,
+) -> Result<shotmemory_core::db::CollectionInfo, String> {
+    let db = state.db.lock().map_err(|e| e.to_string())?;
+    let info = db.create_collection(&name).map_err(|e| e.to_string())?;
+    db.add_many_to_collection_with_origin(info.id, &screenshot_ids, "suggested")
+        .map_err(|e| e.to_string())?;
+    db.mark_collection_auto(info.id, &rule_json)
+        .map_err(|e| e.to_string())?;
+    db.record_feedback(None, &format!("proposal:{proposal_key}"), "accept")
+        .map_err(|e| e.to_string())?;
+    db.list_collections()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .find(|c| c.id == info.id)
+        .ok_or_else(|| "collection missing".to_string())
+}
+
 /// Path to the local data directory (database + thumbnails) for About.
 /// Shown so users know exactly where their data lives.
 #[tauri::command]

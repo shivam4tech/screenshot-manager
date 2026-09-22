@@ -7,6 +7,7 @@ import {
   type DirectoryDto,
   type ScreenshotRow,
   type SearchRow,
+  type SuggestOverview,
   type TagInfo,
 } from "../api";
 import Detail from "./Detail";
@@ -153,6 +154,10 @@ export default function Library({
   const [totalAll, setTotalAll] = useState(0);
   const [starredCount, setStarredCount] = useState<number | null>(null);
   const [dirs, setDirs] = useState<DirectoryDto[]>([]);
+  const [suggestions, setSuggestions] = useState<SuggestOverview | null>(null);
+  const [suggestPreviews, setSuggestPreviews] = useState<Map<string, string>>(new Map());
+  const [bannerDismissed, setBannerDismissed] = useState(false);
+  const [creatingProposal, setCreatingProposal] = useState<string | null>(null);
   const [selectingAll, setSelectingAll] = useState(false);
   const sel = useSelection();
   const { confirm, confirmNode } = useConfirm();
@@ -214,10 +219,29 @@ export default function Library({
     [resolveThumbs]
   );
 
+  const refreshSuggestions = useCallback(async () => {
+    try {
+      const o = await api.suggestionOverview();
+      setSuggestions(o);
+      const fresh = new Map<string, string>();
+      for (const p of o.proposals) {
+        for (const h of p.preview_hashes) {
+          if (!h || fresh.has(h)) continue;
+          const url = await thumbnailUrl(h, 256);
+          if (url) fresh.set(h, url);
+        }
+      }
+      setSuggestPreviews(fresh);
+    } catch (e) {
+      setOrganizeError(String(e));
+    }
+  }, []);
+
   useEffect(() => {
     loadPage(0);
     refreshOrganize();
-  }, [loadPage, refreshOrganize]);
+    refreshSuggestions();
+  }, [loadPage, refreshOrganize, refreshSuggestions]);
 
   // Debounce the query, then run a ranked search when it's non-empty.
   useEffect(() => {
@@ -340,10 +364,11 @@ export default function Library({
   const refreshAfterChange = useCallback(() => {
     loadPage(0);
     refreshOrganize();
+    refreshSuggestions();
     if (view.kind === "collection") {
       loadCollectionItems(view.id, 0).catch(() => {});
     }
-  }, [loadPage, refreshOrganize, loadCollectionItems, view]);
+  }, [loadPage, refreshOrganize, refreshSuggestions, loadCollectionItems, view]);
 
   /** Optimistic star toggle from the grid (no scroll loss). */
   const toggleStar = useCallback((id: number, next: boolean) => {
@@ -447,6 +472,39 @@ export default function Library({
         selectCollection(c);
       })
       .catch((e) => setOrganizeError(String(e)));
+  };
+
+  /** Create a verified suggestion proposal as an auto collection. */
+  const createProposal = async (key: string, name: string, memberIds: number[], reasons: string[]) => {
+    // Proposal names carry a " · N" suffix for scanning; strip it for the
+    // real collection name.
+    const clean = name.replace(/\s·\s\d+$/, "").trim() || name;
+    setCreatingProposal(key);
+    try {
+      const c = await api.createProposedCollection(
+        clean,
+        memberIds,
+        JSON.stringify({ kind: "suggested", key, reasons }),
+        key
+      );
+      await refreshOrganize();
+      await refreshSuggestions();
+      toast(`Collection “${c.name}” created with ${memberIds.length} screenshots`);
+      selectCollection(c);
+    } catch (e) {
+      setOrganizeError(String(e));
+    } finally {
+      setCreatingProposal(null);
+    }
+  };
+
+  const dismissProposal = async (key: string) => {
+    try {
+      await api.recordSuggestionFeedback(null, `proposal:${key}`, "dismiss");
+      await refreshSuggestions();
+    } catch (e) {
+      setOrganizeError(String(e));
+    }
   };
 
   const deleteCollection = async (c: CollectionInfo) => {
@@ -733,6 +791,49 @@ export default function Library({
           </button>
         </div>
 
+        {suggestions && suggestions.proposals.length > 0 && (
+          <div className="side-section">
+            <h4>Suggested</h4>
+            <ul className="side-list suggest-list">
+              {suggestions.proposals.map((p) => (
+                <li key={p.key} className="suggest-card">
+                  <span className="burst-previews" aria-hidden="true">
+                    {p.preview_hashes.slice(0, 3).map((h, i) =>
+                      h && suggestPreviews.has(h) ? (
+                        <img key={i} src={suggestPreviews.get(h)} alt="" loading="lazy" />
+                      ) : (
+                        <span key={i} className="burst-preview-empty" />
+                      )
+                    )}
+                  </span>
+                  <span className="suggest-info" title={p.reasons.join(" · ")}>
+                    <span className="suggest-name">{p.name}</span>
+                    <span className="muted small">{p.reasons.slice(0, 2).join(" · ")}</span>
+                  </span>
+                  <span className="side-ops suggest-ops">
+                    <button
+                      className="btn btn-sm"
+                      disabled={creatingProposal === p.key}
+                      onClick={() => void createProposal(p.key, p.name, p.member_ids, p.reasons)}
+                      title={`Create collection with ${p.member_count} screenshots`}
+                    >
+                      {creatingProposal === p.key ? "…" : "Create"}
+                    </button>
+                    <button
+                      className="icon-btn"
+                      title="Dismiss this suggestion"
+                      aria-label={`Dismiss suggestion ${p.name}`}
+                      onClick={() => void dismissProposal(p.key)}
+                    >
+                      ✕
+                    </button>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         <div className="side-section">
           <h4>Tags</h4>
           {tags.length === 0 ? (
@@ -1009,6 +1110,26 @@ export default function Library({
           )}
 
         </header>
+
+        {!inSpecial && suggestions && suggestions.suggested_count > 0 && !bannerDismissed && (
+          <div className="suggest-banner" role="status">
+            <span>
+              <strong>{suggestions.suggested_count}</strong>{" "}
+              screenshot{suggestions.suggested_count === 1 ? "" : "s"} match{suggestions.suggested_count === 1 ? "es" : ""}{" "}
+              your collections and tags
+            </span>
+            <span className="suggest-banner-actions">
+              {suggestions.first_suggested_id != null && (
+                <button className="link-btn" onClick={() => setDetailId(suggestions.first_suggested_id!)}>
+                  Review
+                </button>
+              )}
+              <button className="icon-btn" aria-label="Dismiss suggestions banner" onClick={() => setBannerDismissed(true)}>
+                ✕
+              </button>
+            </span>
+          </div>
+        )}
 
         {!inSpecial && (
           <div className="page-head">

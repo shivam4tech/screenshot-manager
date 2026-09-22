@@ -1253,6 +1253,42 @@ select.collection-add { width: 100%; margin-top: 4px; font-size: 12.5px; }
 .rename-row.skipped .rename-flag { color: var(--fg-faint); background: var(--bg-hover); }
 .preview-error { white-space: pre-wrap; }
 
+/* suggestion UI: sidebar proposals, banner, detail badges */
+.suggest-list { gap: 8px; }
+.suggest-card {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  padding: 8px;
+}
+.suggest-card .burst-previews img,
+.suggest-card .burst-preview-empty { width: 44px; height: 33px; }
+.suggest-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.suggest-name {
+  font-size: 12.5px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.suggest-ops { opacity: 0; }
+.suggest-card:hover .suggest-ops, .suggest-card:focus-within .suggest-ops { opacity: 1; }
+.suggest-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  background: var(--accent-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 8px 12px; margin: 0 0 12px;
+  font-size: 12.5px;
+}
+.suggest-banner-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.suggest-badges { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.tag-chip.suggest { border-style: dashed; }
+.tag-add-btn {
+  background: none; border: none; padding: 0 2px 0 6px; cursor: pointer;
+  color: var(--accent-strong); font-size: 0.85em; font-weight: 700; border-radius: 4px;
+}
+.tag-add-btn:hover:not(:disabled) { text-decoration: underline; }
+.tag-add-btn:disabled { opacity: 0.5; cursor: default; }
+
 /* ============ REDUCED MOTION ============ */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }

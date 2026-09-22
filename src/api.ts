@@ -303,6 +303,34 @@ export interface RenameOutcome {
   results: RenameResult[];
 }
 
+export interface ScoredTarget {
+  kind: string;
+  id: number | null;
+  name: string;
+  score: number;
+  reasons: string[];
+}
+
+export interface ShotSuggestions {
+  collections: ScoredTarget[];
+  tags: ScoredTarget[];
+}
+
+export interface Proposal {
+  key: string;
+  name: string;
+  reasons: string[];
+  member_count: number;
+  member_ids: number[];
+  preview_hashes: Array<string | null>;
+}
+
+export interface SuggestOverview {
+  proposals: Proposal[];
+  suggested_count: number;
+  first_suggested_id: number | null;
+}
+
 export interface DeleteFailure {
   id: number;
   path: string | null;
@@ -447,6 +475,18 @@ export const api = {
     invoke<RenamePlan>("rename_preview", { ids, options }),
   renameExecute: (targets: RenameTarget[]) =>
     invoke<RenameOutcome>("rename_execute", { targets }),
+  suggestForScreenshot: (id: number) =>
+    invoke<ShotSuggestions>("suggest_for_screenshot", { id }),
+  suggestionOverview: () =>
+    invoke<SuggestOverview>("suggestion_overview"),
+  recordSuggestionFeedback: (screenshotId: number | null, target: string, action: string) =>
+    invoke<void>("record_suggestion_feedback", { screenshotId, target, action }),
+  acceptCollectionSuggestion: (screenshotId: number, collectionId: number) =>
+    invoke<boolean>("accept_collection_suggestion", { screenshotId, collectionId }),
+  acceptTagSuggestion: (screenshotId: number, name: string) =>
+    invoke<boolean>("accept_tag_suggestion", { screenshotId, name }),
+  createProposedCollection: (name: string, screenshotIds: number[], ruleJson: string, proposalKey: string) =>
+    invoke<CollectionInfo>("create_proposed_collection", { name, screenshotIds, ruleJson, proposalKey }),
   getDataDir: () => invoke<string>("get_data_dir"),
   runClassification: () => invoke<ClassifySummary>("run_classification"),
 };

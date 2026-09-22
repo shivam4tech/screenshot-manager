@@ -218,6 +218,21 @@ const MIGRATIONS: &[&str] = &[
     CREATE INDEX idx_rename_journal_paths
         ON rename_journal(old_path, new_path, temp_path);
     "#,
+    // v6 — suggestion feedback log + per-member collection origin (suggested
+    // labeling). Accepts/dismisses double as training labels; origin marks
+    // how each membership/tag arrived without touching existing rows.
+    r#"
+    CREATE TABLE suggestion_feedback (
+        id INTEGER PRIMARY KEY,
+        screenshot_id INTEGER,
+        target TEXT NOT NULL,
+        action TEXT NOT NULL CHECK (action IN ('accept', 'dismiss')),
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX idx_suggestion_feedback_target ON suggestion_feedback(target, action);
+    ALTER TABLE collection_items ADD COLUMN origin TEXT NOT NULL DEFAULT 'manual'
+        CHECK (origin IN ('manual', 'suggested', 'auto'));
+    "#,
 ];
 
 /// A configured source directory.
@@ -1056,6 +1071,21 @@ impl Database {
     /// demand; the FTS index is re-synced so `tag:name` search works at once.
     /// Returns false when the screenshot does not exist.
     pub fn add_tag(&self, screenshot_id: i64, name: &str) -> CoreResult<bool> {
+        self.add_tag_with_origin(screenshot_id, name, "manual")
+    }
+
+    /// Tag a screenshot, recording how the tag arrived. Existing memberships
+    /// keep their original origin (suggested accept on an existing manual
+    /// tag is still a confirmation worth logging, not an overwrite).
+    pub fn add_tag_with_origin(
+        &self,
+        screenshot_id: i64,
+        name: &str,
+        origin: &str,
+    ) -> CoreResult<bool> {
+        if !matches!(origin, "manual" | "suggested" | "auto") {
+            return Err(crate::error::CoreError::other("unknown tag origin"));
+        }
         let Some(tag) = normalize_tag_name(name) else {
             return Err(crate::error::CoreError::other(
                 "tag name must not be empty",
@@ -1071,9 +1101,9 @@ impl Database {
         )?;
         self.conn.execute(
             "INSERT INTO screenshot_tags(screenshot_id, tag_id, origin)
-             SELECT ?1, id, 'manual' FROM tags WHERE name = ?2
+             SELECT ?1, id, ?2 FROM tags WHERE name = ?3
              ON CONFLICT(screenshot_id, tag_id) DO NOTHING",
-            params![screenshot_id, tag],
+            params![screenshot_id, origin, tag],
         )?;
         self.fts_sync_tags(screenshot_id)?;
         Ok(true)
@@ -1360,7 +1390,89 @@ impl Database {
         Ok(confirmed)
     }
 
-    /// Paged items of a collection, newest first (same row shape as the grid).
+    /// Bulk-add with a recorded origin (`suggested` for accepted suggestions).
+    /// Pre-existing memberships keep their original origin.
+    pub fn add_many_to_collection_with_origin(
+        &self,
+        collection_id: i64,
+        screenshot_ids: &[i64],
+        origin: &str,
+    ) -> CoreResult<usize> {
+        if !matches!(origin, "manual" | "suggested" | "auto") {
+            return Err(crate::error::CoreError::other("unknown membership origin"));
+        }
+        let collection: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT 1 FROM collections WHERE id = ?1",
+                params![collection_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if collection.is_none() {
+            return Err(crate::error::CoreError::other("collection not found"));
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        let mut confirmed = 0usize;
+        for sid in screenshot_ids {
+            let n = tx.execute(
+                "INSERT INTO collection_items(collection_id, screenshot_id, origin)
+                 SELECT ?1, ?2, ?3 WHERE EXISTS (SELECT 1 FROM screenshots WHERE id = ?2)
+                 ON CONFLICT(collection_id, screenshot_id) DO NOTHING",
+                params![collection_id, sid, origin],
+            )?;
+            if n > 0 {
+                confirmed += 1;
+            } else {
+                let member: Option<i64> = tx
+                    .query_row(
+                        "SELECT 1 FROM collection_items WHERE collection_id = ?1 AND screenshot_id = ?2",
+                        params![collection_id, sid],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
+                if member.is_some() {
+                    confirmed += 1;
+                }
+            }
+        }
+        tx.commit()?;
+        Ok(confirmed)
+    }
+
+    /// Mark a collection as auto-created from a suggestion, snapshotting the
+    /// rule that produced it for explainability.
+    pub fn mark_collection_auto(&self, id: i64, rule_json: &str) -> CoreResult<bool> {
+        Ok(self
+            .conn
+            .execute(
+                "UPDATE collections SET type = 'auto', rule_json = ?2 WHERE id = ?1",
+                params![id, rule_json],
+            )?
+            > 0)
+    }
+
+    /// Log a suggestion accept/dismiss. This log doubles as future training
+    /// data: every row is a human verdict on one machine proposal.
+    pub fn record_feedback(
+        &self,
+        screenshot_id: Option<i64>,
+        target: &str,
+        action: &str,
+    ) -> CoreResult<()> {
+        if !matches!(action, "accept" | "dismiss") {
+            return Err(crate::error::CoreError::other("unknown feedback action"));
+        }
+        if target.trim().is_empty() || target.len() > 240 {
+            return Err(crate::error::CoreError::other("bad feedback target"));
+        }
+        self.conn.execute(
+            "INSERT INTO suggestion_feedback(screenshot_id, target, action)
+             VALUES (?1, ?2, ?3)",
+            params![screenshot_id, target.trim(), action],
+        )?;
+        Ok(())
+    }
     pub fn list_collection_items(
         &self,
         collection_id: i64,

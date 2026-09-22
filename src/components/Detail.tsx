@@ -4,6 +4,7 @@ import {
   thumbnailUrl,
   type CollectionInfo,
   type ScreenshotDetail,
+  type ShotSuggestions,
 } from "../api";
 import { Icons } from "./icons";
 import { Button, Dropdown, IconButton, useConfirm, type ToastAction } from "./ui";
@@ -42,6 +43,7 @@ export default function Detail({
   const [copied, setCopied] = useState(false);
   const [copiedPath, setCopiedPath] = useState(false);
   const [tagEditing, setTagEditing] = useState(false);
+  const [suggestions, setSuggestions] = useState<ShotSuggestions | null>(null);
   const lastZoom = useRef(2);
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -61,6 +63,7 @@ export default function Detail({
     setImgUrl(await thumbnailUrl(d.content_hash, 1024));
     setMemberOf(await api.listScreenshotCollections(id));
     setAllCollections(await api.listCollections());
+    api.suggestForScreenshot(id).then(setSuggestions).catch(() => {});
   }, [id]);
 
   useEffect(() => {
@@ -142,6 +145,21 @@ export default function Detail({
     const text = noteDraft;
     setNoteDraft(null);
     void mutate(() => api.setNote(id, text));
+  };
+
+  const acceptTag = (name: string) => {
+    void mutate(() => api.acceptTagSuggestion(id, name).then(() => {}));
+  };
+
+  const acceptCollection = (collectionId: number) => {
+    void mutate(() => api.acceptCollectionSuggestion(id, collectionId).then(() => {}));
+  };
+
+  const dismissSuggestion = (target: string) => {
+    api
+      .recordSuggestionFeedback(id, target, "dismiss")
+      .then(() => api.suggestForScreenshot(id).then(setSuggestions).catch(() => {}))
+      .catch((e) => setError(String(e)));
   };
 
   const { confirm, confirmNode } = useConfirm();
@@ -333,6 +351,35 @@ export default function Detail({
                     </Button>
                   )}
                 </div>
+                {suggestions && suggestions.tags.length > 0 && (
+                  <div className="suggest-badges" aria-label="Suggested tags">
+                    {suggestions.tags.map((t) => (
+                      <span
+                        className="tag-chip suggest"
+                        key={t.name}
+                        title={`Suggested: ${t.reasons.join(" · ")}`}
+                      >
+                        + {t.name}
+                        <button
+                          className="tag-add-btn"
+                          disabled={saving}
+                          onClick={() => acceptTag(t.name)}
+                          aria-label={`Add suggested tag ${t.name}`}
+                        >
+                          Add
+                        </button>
+                        <button
+                          className="tag-x"
+                          disabled={saving}
+                          onClick={() => dismissSuggestion(`tag:${t.name}`)}
+                          aria-label={`Dismiss suggested tag ${t.name}`}
+                        >
+                          ✕
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="insp-section">
@@ -345,6 +392,35 @@ export default function Detail({
                     </span>
                   ))}
                 </div>
+                {suggestions && suggestions.collections.length > 0 && (
+                  <div className="suggest-badges" aria-label="Suggested collections">
+                    {suggestions.collections.map((c) => (
+                      <span
+                        className="tag-chip suggest"
+                        key={c.id ?? c.name}
+                        title={`Suggested: ${c.reasons.join(" · ")}`}
+                      >
+                        + {c.name}
+                        <button
+                          className="tag-add-btn"
+                          disabled={saving || c.id == null}
+                          onClick={() => c.id != null && acceptCollection(c.id)}
+                          aria-label={`Add to suggested collection ${c.name}`}
+                        >
+                          Add
+                        </button>
+                        <button
+                          className="tag-x"
+                          disabled={saving}
+                          onClick={() => dismissSuggestion(`collection:${c.id}`)}
+                          aria-label={`Dismiss suggested collection ${c.name}`}
+                        >
+                          ✕
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
                 {addable.length > 0 && (
                   <Dropdown
                     value=""
