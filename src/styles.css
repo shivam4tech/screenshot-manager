@@ -1284,7 +1284,11 @@ select.collection-add { width: 100%; margin-top: 4px; font-size: 12.5px; }
 .review-strip-btn {
   display: flex; align-items: center; gap: 4px;
   background: none; border: none; padding: 0; cursor: pointer; border-radius: 8px;
+  /* Fixed width for 4 overlapped thumbs so the name column always lines up,
+     even when a group has fewer than 4 previews. */
+  flex-shrink: 0; width: 244px;
 }
+.review-strip { width: 214px; justify-content: flex-start; }
 .review-strip img, .review-strip .burst-preview-empty { width: 64px; height: 48px; }
 .review-chevron { color: var(--fg-faint); transition: transform 120ms; flex-shrink: 0; }
 .review-chevron.open { transform: rotate(90deg); }
