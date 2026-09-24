@@ -8,7 +8,7 @@ import {
 import Cull, { type CullItem } from "./Cull";
 import Detail from "./Detail";
 import { Icons } from "./icons";
-import { Button, EmptyState, type ToastAction } from "./ui";
+import { Button, EmptyState, useConfirm, type ToastAction } from "./ui";
 
 /** Expanded groups load full rows (capped) so Cull + prev/next work on them. */
 const MEMBER_LOAD_CAP = 100;
@@ -52,6 +52,7 @@ export default function Review({
   const [cullingKey, setCullingKey] = useState<string | null>(null);
   const [detail, setDetail] = useState<{ key: string; id: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { confirm, confirmNode } = useConfirm();
 
   const reload = useCallback(async () => {
     try {
@@ -158,6 +159,52 @@ export default function Review({
   const dismiss = async (p: Proposal) => {
     try {
       await api.recordSuggestionFeedback(null, `proposal:${p.key}`, "dismiss");
+      refreshSuggestions();
+      await reload();
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  /** One click from the action row: load members if needed, then triage. */
+  const startCull = async (p: Proposal) => {
+    let rows = members.get(p.key);
+    if (!rows) rows = await loadMembers(p);
+    if (rows.length > 0) setCullingKey(p.key);
+  };
+
+  /** Trash every screenshot in the group (confirm first, undo offered). */
+  const deleteGroup = async (p: Proposal) => {
+    const name = drafts.get(p.key) ?? cleanName(p.name);
+    const ok = await confirm({
+      title: `Trash all ${p.member_count} screenshots in “${name}”?`,
+      body: "Files go to the OS trash (recoverable) and the suggestion is dismissed.",
+      confirmLabel: "Trash all",
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      const s = await api.deleteScreenshots(p.member_ids);
+      const trashed = p.member_ids.filter((id) => !s.failed.some((f) => f.id === id));
+      await api.recordSuggestionFeedback(null, `proposal:${p.key}`, "dismiss");
+      if (trashed.length > 0) {
+        onNotify(
+          `${trashed.length} screenshot${trashed.length === 1 ? "" : "s"} moved to trash`,
+          {
+            label: "Undo",
+            fn: () => {
+              void (async () => {
+                await api.restoreScreenshots(trashed);
+                await reload();
+                refreshOrganize();
+                refreshSuggestions();
+              })();
+            },
+          }
+        );
+      }
+      if (s.failed.length > 0) setError(s.failed[0].message);
+      refreshOrganize();
       refreshSuggestions();
       await reload();
     } catch (e) {
@@ -325,11 +372,19 @@ export default function Review({
                     </Button>
                     <button
                       className="btn btn-sm"
-                      onClick={() => toggleExpand(p)}
-                      aria-expanded={isOpen}
-                      title={isOpen ? "Hide members" : "Preview members"}
+                      disabled={loadingMembers}
+                      onClick={() => void startCull(p)}
+                      title="Keyboard triage this group: → keep, x trash, u undo"
                     >
-                      {isOpen ? "Hide" : "Preview"}
+                      Cull
+                    </button>
+                    <button
+                      className="icon-btn"
+                      title={`Trash all ${p.member_count} screenshots in this group`}
+                      aria-label={`Trash all screenshots in ${draft}`}
+                      onClick={() => void deleteGroup(p)}
+                    >
+                      <Icons.trash size={14} />
                     </button>
                     <button
                       className="icon-btn"
@@ -349,15 +404,6 @@ export default function Review({
                           ? `${rows.length} shown${p.member_count > rows.length ? ` of ${p.member_count}` : ""} — click any shot to walk through with ← →`
                           : loadingMembers ? "Loading members…" : ""}
                       </span>
-                      {rows.length > 0 && (
-                        <button
-                          className="link-btn"
-                          onClick={() => setCullingKey(p.key)}
-                          title="Keyboard triage this group: → keep, x trash, u undo"
-                        >
-                          Cull group
-                        </button>
-                      )}
                     </div>
                     <div className="review-members">
                       {rows.map((r) => (
@@ -415,6 +461,7 @@ export default function Review({
           position={`${detailIndex + 1} / ${detailRows.length}`}
         />
       )}
+      {confirmNode}
     </div>
   );
 }
