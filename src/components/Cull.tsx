@@ -105,9 +105,9 @@ export default function Cull({
   }, [undoStack, busy, items]);
 
   const goNext = useCallback(() => {
+    // Stop at the last remaining shot — never advance past it.
     const next = step(index, 1);
-    if (next === null) setFinished(true);
-    else setIndex(next);
+    if (next !== null) setIndex(next);
   }, [index, step]);
 
   const goPrev = useCallback(() => {
@@ -160,6 +160,8 @@ export default function Cull({
   }, [goNext, goPrev, trashCurrent, undoLast, finished, trashed.join(",")]);
 
   const cur = items[index];
+  const canPrev = !finished && step(index, -1) !== null;
+  const canNext = !finished && step(index, 1) !== null;
 
   return (
     <div className="cull-backdrop" role="dialog" aria-modal="true" aria-label="Cull mode">
@@ -204,7 +206,7 @@ export default function Cull({
 
       {!finished && (
         <div className="cull-actions" role="toolbar" aria-label="Cull actions">
-          <button className="cull-keep" onClick={goPrev} disabled={busy} title="Previous (←)">
+          <button className="cull-keep" onClick={goPrev} disabled={busy || !canPrev} title="Previous (←)">
             <span aria-hidden="true">←</span> Keep
           </button>
           <button
@@ -215,7 +217,7 @@ export default function Cull({
           >
             {busy ? "…" : "Trash"}
           </button>
-          <button className="cull-keep" onClick={goNext} disabled={busy} title="Next (→)">
+          <button className="cull-keep" onClick={goNext} disabled={busy || !canNext} title="Next (→)">
             Keep <span aria-hidden="true">→</span>
           </button>
           <button
