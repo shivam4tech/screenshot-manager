@@ -64,14 +64,12 @@ pub struct SuggestOverview {
 
 #[derive(Debug, Clone, Default)]
 struct ShotProfile {
-    id: i64,
     app: Option<String>,
     category: Option<String>,
     domain: Option<String>,
     tags: HashSet<String>,
     burst: Option<String>,
     phash: Option<u64>,
-    content_hash: Option<String>,
 }
 
 fn shot_profile(db: &Database, id: i64) -> CoreResult<Option<ShotProfile>> {
@@ -102,14 +100,12 @@ fn shot_profile(db: &Database, id: i64) -> CoreResult<Option<ShotProfile>> {
         .as_deref()
         .and_then(|h| phash_from_hex(h).ok());
     Ok(Some(ShotProfile {
-        id,
         app,
         category,
         domain,
         tags,
         burst: None,
         phash,
-        content_hash: None,
     }))
 }
 
