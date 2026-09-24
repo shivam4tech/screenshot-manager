@@ -15,6 +15,7 @@ import Timeline from "./Timeline";
 import Duplicates from "./Duplicates";
 import Settings from "./Settings";
 import Bursts from "./Bursts";
+import Review from "./Review";
 import Cleanup from "./Cleanup";
 import Cull from "./Cull";
 import { BulkBar, useSelection } from "./bulk";
@@ -36,6 +37,7 @@ type View =
   | { kind: "timeline" }
   | { kind: "duplicates" }
   | { kind: "bursts" }
+  | { kind: "review" }
   | { kind: "cleanup" }
   | { kind: "settings" };
 
@@ -87,6 +89,7 @@ const NAV: Array<{ kind: View["kind"]; label: string; icon: IconName; title: str
   { kind: "timeline", label: "Timeline", icon: "clock", title: "Browse by capture date" },
   { kind: "duplicates", label: "Duplicates", icon: "copy", title: "Review exact and similar duplicates" },
   { kind: "bursts", label: "Bursts", icon: "zap", title: "Capture-time clusters with theme hints" },
+  { kind: "review", label: "Review", icon: "sparkles", title: "Suggested groups waiting for your approval" },
   { kind: "cleanup", label: "Cleanup", icon: "drive", title: "Review what's taking space" },
   { kind: "settings", label: "Settings", icon: "settings", title: "Appearance, OCR, enrichment, index health" },
 ];
@@ -155,9 +158,7 @@ export default function Library({
   const [starredCount, setStarredCount] = useState<number | null>(null);
   const [dirs, setDirs] = useState<DirectoryDto[]>([]);
   const [suggestions, setSuggestions] = useState<SuggestOverview | null>(null);
-  const [suggestPreviews, setSuggestPreviews] = useState<Map<string, string>>(new Map());
   const [bannerDismissed, setBannerDismissed] = useState(false);
-  const [creatingProposal, setCreatingProposal] = useState<string | null>(null);
   const [selectingAll, setSelectingAll] = useState(false);
   const sel = useSelection();
   const { confirm, confirmNode } = useConfirm();
@@ -221,17 +222,7 @@ export default function Library({
 
   const refreshSuggestions = useCallback(async () => {
     try {
-      const o = await api.suggestionOverview();
-      setSuggestions(o);
-      const fresh = new Map<string, string>();
-      for (const p of o.proposals) {
-        for (const h of p.preview_hashes) {
-          if (!h || fresh.has(h)) continue;
-          const url = await thumbnailUrl(h, 256);
-          if (url) fresh.set(h, url);
-        }
-      }
-      setSuggestPreviews(fresh);
+      setSuggestions(await api.suggestionOverview());
     } catch (e) {
       setOrganizeError(String(e));
     }
@@ -291,6 +282,7 @@ export default function Library({
     (view.kind === "timeline" ||
       view.kind === "duplicates" ||
       view.kind === "bursts" ||
+      view.kind === "review" ||
       view.kind === "cleanup" ||
       view.kind === "settings");
 
@@ -474,39 +466,6 @@ export default function Library({
       .catch((e) => setOrganizeError(String(e)));
   };
 
-  /** Create a verified suggestion proposal as an auto collection. */
-  const createProposal = async (key: string, name: string, memberIds: number[], reasons: string[]) => {
-    // Proposal names carry a " · N" suffix for scanning; strip it for the
-    // real collection name.
-    const clean = name.replace(/\s·\s\d+$/, "").trim() || name;
-    setCreatingProposal(key);
-    try {
-      const c = await api.createProposedCollection(
-        clean,
-        memberIds,
-        JSON.stringify({ kind: "suggested", key, reasons }),
-        key
-      );
-      await refreshOrganize();
-      await refreshSuggestions();
-      toast(`Collection “${c.name}” created with ${memberIds.length} screenshots`);
-      selectCollection(c);
-    } catch (e) {
-      setOrganizeError(String(e));
-    } finally {
-      setCreatingProposal(null);
-    }
-  };
-
-  const dismissProposal = async (key: string) => {
-    try {
-      await api.recordSuggestionFeedback(null, `proposal:${key}`, "dismiss");
-      await refreshSuggestions();
-    } catch (e) {
-      setOrganizeError(String(e));
-    }
-  };
-
   const deleteCollection = async (c: CollectionInfo) => {
     const ok = await confirm({
       title: `Delete collection “${c.name}”?`,
@@ -687,6 +646,7 @@ export default function Library({
     view.kind === "timeline" ? "Timeline" :
     view.kind === "duplicates" ? "Duplicates" :
     view.kind === "bursts" ? "Bursts" :
+    view.kind === "review" ? "Review" :
     view.kind === "cleanup" ? "Cleanup" :
     view.kind === "settings" ? "Settings" : "All Screenshots";
   const starredActive = hasFlag(activeQuery, "is:starred");
@@ -739,6 +699,9 @@ export default function Library({
                   >
                     <span className="side-ic"><Icon size={16} /></span>
                     <span className="side-label">{n.label}</span>
+                    {n.kind === "review" && !!suggestions && suggestions.proposals.length > 0 && (
+                      <CountBadge n={suggestions.proposals.length} />
+                    )}
                   </button>
                 </li>
               );
@@ -790,49 +753,6 @@ export default function Library({
             <Icons.plus size={14} /> Add folder
           </button>
         </div>
-
-        {suggestions && suggestions.proposals.length > 0 && (
-          <div className="side-section">
-            <h4>Suggested</h4>
-            <ul className="side-list suggest-list">
-              {suggestions.proposals.map((p) => (
-                <li key={p.key} className="suggest-card">
-                  <span className="burst-previews" aria-hidden="true">
-                    {p.preview_hashes.slice(0, 3).map((h, i) =>
-                      h && suggestPreviews.has(h) ? (
-                        <img key={i} src={suggestPreviews.get(h)} alt="" loading="lazy" />
-                      ) : (
-                        <span key={i} className="burst-preview-empty" />
-                      )
-                    )}
-                  </span>
-                  <span className="suggest-info" title={p.reasons.join(" · ")}>
-                    <span className="suggest-name">{p.name}</span>
-                    <span className="muted small">{p.reasons.slice(0, 2).join(" · ")}</span>
-                  </span>
-                  <span className="side-ops suggest-ops">
-                    <button
-                      className="btn btn-sm"
-                      disabled={creatingProposal === p.key}
-                      onClick={() => void createProposal(p.key, p.name, p.member_ids, p.reasons)}
-                      title={`Create collection with ${p.member_count} screenshots`}
-                    >
-                      {creatingProposal === p.key ? "…" : "Create"}
-                    </button>
-                    <button
-                      className="icon-btn"
-                      title="Dismiss this suggestion"
-                      aria-label={`Dismiss suggestion ${p.name}`}
-                      onClick={() => void dismissProposal(p.key)}
-                    >
-                      ✕
-                    </button>
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
 
         <div className="side-section">
           <h4>Tags</h4>
@@ -1119,11 +1039,12 @@ export default function Library({
               your collections and tags
             </span>
             <span className="suggest-banner-actions">
-              {suggestions.first_suggested_id != null && (
-                <button className="link-btn" onClick={() => setDetailId(suggestions.first_suggested_id!)}>
-                  Review
-                </button>
-              )}
+              <button
+                className="link-btn"
+                onClick={() => { setQuery(""); setView({ kind: "review" }); }}
+              >
+                Review
+              </button>
               <button className="icon-btn" aria-label="Dismiss suggestions banner" onClick={() => setBannerDismissed(true)}>
                 ✕
               </button>
@@ -1182,6 +1103,14 @@ export default function Library({
               onOpenDetail={(id) => setDetailId(id)}
               collections={collections}
               refreshOrganize={refreshOrganize}
+            />
+          ) : view.kind === "review" ? (
+            <Review
+              onOpenDetail={(id) => setDetailId(id)}
+              onOpenCollection={selectCollection}
+              refreshOrganize={refreshOrganize}
+              refreshSuggestions={() => void refreshSuggestions()}
+              onNotify={(msg) => toast(msg)}
             />
           ) : view.kind === "cleanup" ? (
             <Cleanup

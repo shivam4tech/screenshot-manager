@@ -106,6 +106,10 @@ export const Icons = {
     <line x1="6" y1="7.5" x2="6.01" y2="7.5" />
     <line x1="6" y1="16.5" x2="6.01" y2="16.5" />
   </>, p.className),
+  sparkles: (p: P) => base(p.size ?? 16, <>
+    <path d="M12 3l1.88 5.76a2 2 0 0 0 1.36 1.36L21 12l-5.76 1.88a2 2 0 0 0-1.36 1.36L12 21l-1.88-5.76a2 2 0 0 0-1.36-1.36L3 12l5.76-1.88a2 2 0 0 0 1.36-1.36L12 3z" />
+    <path d="M19 3v3M17.5 4.5h3" />
+  </>, p.className),
 };
 
 export type IconName = keyof typeof Icons;
