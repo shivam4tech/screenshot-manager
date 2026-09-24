@@ -201,7 +201,7 @@ export default function Library({
       ]);
       setTags(t);
       setCollections(c);
-      setTotalAll(s.total);
+      setTotalAll(s.available);
       setDirs(d);
       setOrganizeError(null);
       api.search("is:starred", 1, 0).then((o) => setStarredCount(o.total)).catch(() => {});
@@ -1095,22 +1095,21 @@ export default function Library({
           ) : view.kind === "duplicates" ? (
             <Duplicates
               onOpenDetail={(id) => setDetailId(id)}
-              onChanged={refreshOrganize}
+              onChanged={refreshAfterChange}
               onNotify={(msg, action) => toast(msg, action)}
             />
           ) : view.kind === "bursts" ? (
             <Bursts
               onOpenDetail={(id) => setDetailId(id)}
               collections={collections}
-              refreshOrganize={refreshOrganize}
+              onChanged={refreshAfterChange}
             />
           ) : view.kind === "review" ? (
             <Review
               onOpenDetail={(id) => setDetailId(id)}
               onOpenCollection={selectCollection}
-              refreshOrganize={refreshOrganize}
-              refreshSuggestions={() => void refreshSuggestions()}
-              onNotify={(msg) => toast(msg)}
+              onChanged={refreshAfterChange}
+              onNotify={(msg, action) => toast(msg, action)}
             />
           ) : view.kind === "cleanup" ? (
             <Cleanup
@@ -1119,6 +1118,7 @@ export default function Library({
                 setQuery("");
                 setView({ kind });
               }}
+              onChanged={refreshAfterChange}
               onNotify={(msg, action) => toast(msg, action)}
             />
           ) : (

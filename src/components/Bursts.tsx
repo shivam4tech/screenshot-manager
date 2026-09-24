@@ -42,11 +42,11 @@ function burstTitle(b: Burst): string {
 export default function Bursts({
   onOpenDetail,
   collections,
-  refreshOrganize,
+  onChanged,
 }: {
   onOpenDetail: (id: number) => void;
   collections: CollectionInfo[];
-  refreshOrganize: () => void;
+  onChanged: () => void;
 }) {
   const [bursts, setBursts] = useState<Burst[]>([]);
   const [gap, setGap] = useState(1800);
@@ -166,7 +166,7 @@ export default function Bursts({
       const s = await api.restoreScreenshots(ids);
       const ok = ids.filter((id) => !s.failed.some((f) => f.id === id));
       reload();
-      refreshOrganize();
+      onChanged();
       if (ok.length > 0) sel.selectAll(ok);
       toast(
         ok.length === ids.length
@@ -184,7 +184,7 @@ export default function Bursts({
         applied.map((a) => ({ id: a.id, new_path: a.old_path }))
       );
       reload();
-      refreshOrganize();
+      onChanged();
       const bits = [`restored ${out.renamed} original name${out.renamed === 1 ? "" : "s"}`];
       if (out.failed > 0) bits.push(`${out.failed} could not be restored (name taken?)`);
       toast(bits.join(", ") + ".");
@@ -195,7 +195,7 @@ export default function Bursts({
 
   const handleRenamed = (applied: AppliedRename[]) => {
     reload();
-    refreshOrganize();
+    onChanged();
     toast(`Renamed ${applied.length} screenshot${applied.length === 1 ? "" : "s"}.`, {
       label: "Undo",
       fn: () => void undoRename(applied),
@@ -213,7 +213,7 @@ export default function Bursts({
     } else {
       sel.clear();
     }
-    refreshOrganize();
+    onChanged();
     reload();
   };
 

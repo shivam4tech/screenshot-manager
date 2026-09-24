@@ -56,6 +56,7 @@ pub fn detect_bursts(db: &Database, max_gap_secs: i64) -> CoreResult<Vec<Burst>>
         "SELECT id, COALESCE(created_ts, modified_ts) AS ts
          FROM screenshots
          WHERE COALESCE(created_ts, modified_ts) IS NOT NULL
+           AND status != 'missing'
          ORDER BY ts",
     )?;
     let ordered = stmt
@@ -111,6 +112,7 @@ fn burst_mode(
     let sql = format!(
         "SELECT {column} FROM screenshots
          WHERE COALESCE(created_ts, modified_ts) BETWEEN ?1 AND ?2
+           AND status != 'missing'
            AND {column} IS NOT NULL
          GROUP BY {column} ORDER BY COUNT(*) DESC LIMIT 1"
     );
@@ -127,6 +129,7 @@ fn burst_top_tags(db: &Database, start_ts: i64, end_ts: i64) -> CoreResult<Vec<S
          JOIN screenshot_tags st ON st.tag_id = t.id
          JOIN screenshots s ON s.id = st.screenshot_id
          WHERE COALESCE(s.created_ts, s.modified_ts) BETWEEN ?1 AND ?2
+           AND s.status != 'missing'
          GROUP BY t.id ORDER BY n DESC, t.name LIMIT 3",
     )?;
     let tags = stmt
@@ -144,6 +147,7 @@ fn burst_previews(
     let mut stmt = db.conn().prepare(
         "SELECT content_hash FROM screenshots
          WHERE COALESCE(created_ts, modified_ts) BETWEEN ?1 AND ?2
+           AND status != 'missing'
          ORDER BY COALESCE(created_ts, modified_ts) DESC, id DESC LIMIT 4",
     )?;
     let hashes = stmt
@@ -168,6 +172,7 @@ pub fn burst_items(
                 status, ocr_status, content_hash, phash, starred
          FROM screenshots
          WHERE COALESCE(created_ts, modified_ts) BETWEEN ?1 AND ?2
+           AND status != 'missing'
          ORDER BY COALESCE(created_ts, modified_ts) DESC, id DESC
          LIMIT ?3 OFFSET ?4",
     )?;
@@ -192,6 +197,7 @@ pub fn burst_range_ids(
     let mut stmt = db.conn().prepare(
         "SELECT id FROM screenshots
          WHERE COALESCE(created_ts, modified_ts) BETWEEN ?1 AND ?2
+           AND status != 'missing'
          ORDER BY COALESCE(created_ts, modified_ts) DESC, id DESC",
     )?;
     let ids = stmt
@@ -208,6 +214,7 @@ pub fn timeline_item_ids(db: &Database, date: &str) -> CoreResult<Vec<i64>> {
     let mut stmt = db.conn().prepare(
         "SELECT id FROM screenshots
          WHERE date(datetime(COALESCE(created_ts, modified_ts), 'unixepoch', 'localtime')) = ?1
+           AND status != 'missing'
          ORDER BY COALESCE(created_ts, modified_ts) DESC, id DESC",
     )?;
     let ids = stmt
@@ -235,6 +242,7 @@ pub fn timeline_months(db: &Database) -> CoreResult<Vec<TimelineMonth>> {
                 COUNT(*)
          FROM screenshots
          WHERE COALESCE(created_ts, modified_ts) IS NOT NULL
+           AND status != 'missing'
          GROUP BY 1, 2
          ORDER BY 1 DESC, 2 DESC",
     )?;
@@ -264,6 +272,7 @@ pub fn timeline_days(db: &Database, year: i32, month: u32) -> CoreResult<Vec<Tim
                 COUNT(*)
          FROM screenshots
          WHERE COALESCE(created_ts, modified_ts) IS NOT NULL
+           AND status != 'missing'
            AND strftime('%Y-%m', datetime(COALESCE(created_ts, modified_ts), 'unixepoch', 'localtime'))
                = printf('%04d-%02d', ?1, ?2)
          GROUP BY day
@@ -295,6 +304,7 @@ pub fn timeline_items(
                 status, ocr_status, content_hash, phash, starred
          FROM screenshots
          WHERE date(datetime(COALESCE(created_ts, modified_ts), 'unixepoch', 'localtime')) = ?1
+           AND status != 'missing'
          ORDER BY COALESCE(created_ts, modified_ts) DESC, id DESC
          LIMIT ?2 OFFSET ?3",
     )?;

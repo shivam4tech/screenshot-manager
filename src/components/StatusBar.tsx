@@ -86,7 +86,7 @@ export default function StatusBar({
       {appState?.indexing ? (
         <span>
           <span className="dot dot-active" aria-hidden="true" /> Indexing…{" "}
-          {stats.total.toLocaleString()} indexed
+          {stats.available.toLocaleString()} indexed
         </span>
       ) : stats.problem_count > 0 ? (
         <span>

@@ -846,6 +846,7 @@ impl Database {
             "SELECT id, path, filename, created_ts, width, height, format,
                     status, ocr_status, content_hash, phash, starred
              FROM screenshots
+             WHERE status != 'missing'
              ORDER BY COALESCE(created_ts, modified_ts) DESC, id DESC
              LIMIT ?1 OFFSET ?2",
         )?;
@@ -860,6 +861,7 @@ impl Database {
     pub fn all_screenshot_ids(&self) -> CoreResult<Vec<i64>> {
         let mut stmt = self.conn.prepare(
             "SELECT id FROM screenshots
+             WHERE status != 'missing'
              ORDER BY COALESCE(created_ts, modified_ts) DESC, id DESC",
         )?;
         let ids = stmt
@@ -874,7 +876,7 @@ impl Database {
             "SELECT s.id
              FROM screenshots s
              JOIN collection_items ci ON ci.screenshot_id = s.id
-             WHERE ci.collection_id = ?1
+             WHERE ci.collection_id = ?1 AND s.status != 'missing'
              ORDER BY COALESCE(s.created_ts, s.modified_ts) DESC, s.id DESC",
         )?;
         let ids = stmt
@@ -1259,12 +1261,15 @@ impl Database {
     /// Every collection with its item count, newest first.
     pub fn list_collections(&self) -> CoreResult<Vec<CollectionInfo>> {
         let mut stmt = self.conn.prepare(
-            "SELECT c.id, c.name, c.type, COUNT(ci.screenshot_id) AS n, c.created_at
+            "SELECT c.id, c.name, c.type,
+                    COUNT(CASE WHEN s.status != 'missing' THEN 1 END) AS n,
+                    c.created_at
              FROM collections c
              LEFT JOIN collection_items ci ON ci.collection_id = c.id
+             LEFT JOIN screenshots s ON s.id = ci.screenshot_id
              GROUP BY c.id
              ORDER BY c.created_at DESC, c.id DESC",
-        )?;
+        )?;;
         let rows = stmt
             .query_map([], |r| {
                 Ok(CollectionInfo {
@@ -1283,9 +1288,12 @@ impl Database {
         Ok(self
             .conn
             .query_row(
-                "SELECT c.id, c.name, c.type, COUNT(ci.screenshot_id), c.created_at
+                "SELECT c.id, c.name, c.type,
+                        COUNT(CASE WHEN s.status != 'missing' THEN 1 END),
+                        c.created_at
                  FROM collections c
                  LEFT JOIN collection_items ci ON ci.collection_id = c.id
+                 LEFT JOIN screenshots s ON s.id = ci.screenshot_id
                  WHERE c.name = ?1
                  GROUP BY c.id",
                 params![name],
@@ -1484,7 +1492,7 @@ impl Database {
                     s.status, s.ocr_status, s.content_hash, s.phash, s.starred
              FROM screenshots s
              JOIN collection_items ci ON ci.screenshot_id = s.id
-             WHERE ci.collection_id = ?1
+             WHERE ci.collection_id = ?1 AND s.status != 'missing'
              ORDER BY COALESCE(s.created_ts, s.modified_ts) DESC, s.id DESC
              LIMIT ?2 OFFSET ?3",
         )?;
@@ -1498,7 +1506,9 @@ impl Database {
     pub fn screenshot_collections(&self, screenshot_id: i64) -> CoreResult<Vec<CollectionInfo>> {
         let mut stmt = self.conn.prepare(
             "SELECT c.id, c.name, c.type,
-                    (SELECT COUNT(*) FROM collection_items WHERE collection_id = c.id),
+                    (SELECT COUNT(*) FROM collection_items ci
+                     JOIN screenshots s ON s.id = ci.screenshot_id
+                     WHERE ci.collection_id = c.id AND s.status != 'missing'),
                     c.created_at
              FROM collections c
              JOIN collection_items ci ON ci.collection_id = c.id
@@ -1868,6 +1878,32 @@ mod tests {
         assert_eq!(db.list_directories().unwrap().len(), 2);
         db.remove_directory(d2.id).unwrap();
         assert_eq!(db.list_directories().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn missing_records_stay_out_of_lists_and_counts() {
+        let db = Database::open_in_memory().unwrap();
+        let mk = |name: &str| {
+            db.insert_screenshot(&NewScreenshot {
+                path: format!("/tmp/{name}"),
+                filename: name.into(),
+                ..Default::default()
+            })
+            .unwrap()
+        };
+        let keep = mk("keep.png");
+        let gone = mk("gone.png");
+        let col = db.create_collection("c").unwrap();
+        db.add_to_collection(col.id, keep).unwrap();
+        db.add_to_collection(col.id, gone).unwrap();
+        db.mark_missing(&[gone]).unwrap();
+
+        assert_eq!(db.list_screenshots(10, 0).unwrap().len(), 1);
+        assert_eq!(db.all_screenshot_ids().unwrap(), vec![keep]);
+        assert_eq!(db.list_collection_items(col.id, 10, 0).unwrap().len(), 1);
+        assert_eq!(db.collection_item_ids(col.id).unwrap(), vec![keep]);
+        let cols = db.list_collections().unwrap();
+        assert_eq!(cols[0].item_count, 1);
     }
 
     #[test]

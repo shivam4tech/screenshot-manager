@@ -333,16 +333,27 @@ mod tests {
         let renamed = src.join("renamed shot.png");
         std::fs::rename(&img, &renamed).unwrap();
         assert!(wait_for(15, || {
-            db2.list_screenshots(10, 0).unwrap()[0].filename == "renamed shot.png"
+            db2.list_screenshots(10, 0)
+                .unwrap()
+                .first()
+                .map(|r| r.filename.clone())
+                == Some("renamed shot.png".to_string())
         }));
 
-        // Delete → record stays but is marked missing.
+        // Delete → hidden from the grid; the record is kept as missing.
         std::fs::remove_file(&renamed).unwrap();
         assert!(wait_for(15, || {
-            db2.list_screenshots(10, 0).unwrap()[0].status == "missing"
+            db2.list_screenshots(10, 0).unwrap().is_empty()
         }));
         // Metadata is retained — the user may reconnect the drive.
-        assert!(db2.list_screenshots(10, 0).unwrap()[0].content_hash.is_some());
+        let (status, hash): (String, Option<String>) = db2
+            .conn()
+            .query_row("SELECT status, content_hash FROM screenshots", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(status, "missing");
+        assert!(hash.is_some());
     }
 
     #[test]

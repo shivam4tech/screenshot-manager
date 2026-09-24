@@ -27,14 +27,12 @@ function cleanName(name: string): string {
 export default function Review({
   onOpenDetail,
   onOpenCollection,
-  refreshOrganize,
-  refreshSuggestions,
+  onChanged,
   onNotify,
 }: {
   onOpenDetail: (id: number) => void;
   onOpenCollection: (c: CollectionInfo) => void;
-  refreshOrganize: () => void;
-  refreshSuggestions: () => void;
+  onChanged: () => void;
   onNotify: (msg: string, action?: ToastAction) => void;
 }) {
   const [proposals, setProposals] = useState<Proposal[]>([]);
@@ -144,8 +142,7 @@ export default function Review({
         JSON.stringify({ kind: "suggested", key: p.key, reasons: p.reasons }),
         p.key
       );
-      refreshOrganize();
-      refreshSuggestions();
+      onChanged();
       await reload();
       onNotify(`Collection “${c.name}” created with ${p.member_count} screenshots`);
       onOpenCollection(c);
@@ -159,7 +156,7 @@ export default function Review({
   const dismiss = async (p: Proposal) => {
     try {
       await api.recordSuggestionFeedback(null, `proposal:${p.key}`, "dismiss");
-      refreshSuggestions();
+      onChanged();
       await reload();
     } catch (e) {
       setError(String(e));
@@ -196,16 +193,14 @@ export default function Review({
               void (async () => {
                 await api.restoreScreenshots(trashed);
                 await reload();
-                refreshOrganize();
-                refreshSuggestions();
+                onChanged();
               })();
             },
           }
         );
       }
       if (s.failed.length > 0) setError(s.failed[0].message);
-      refreshOrganize();
-      refreshSuggestions();
+      onChanged();
       await reload();
     } catch (e) {
       setError(String(e));
@@ -224,21 +219,19 @@ export default function Review({
         `${trashedIds.length} screenshot${trashedIds.length === 1 ? "" : "s"} moved to trash`,
         {
           label: "Undo",
-          fn: () => {
-            void (async () => {
-              await api.restoreScreenshots(trashedIds);
-              const p = proposals.find((x) => x.key === key);
-              if (p) await loadMembers(p);
-              await reload();
-              refreshOrganize();
-              refreshSuggestions();
-            })();
-          },
-        }
-      );
-    }
-    refreshOrganize();
-    refreshSuggestions();
+            fn: () => {
+              void (async () => {
+                await api.restoreScreenshots(trashedIds);
+                const p = proposals.find((x) => x.key === key);
+                if (p) await loadMembers(p);
+                await reload();
+                onChanged();
+              })();
+            },
+          }
+        );
+      }
+    onChanged();
     await reload();
   };
 
@@ -444,8 +437,7 @@ export default function Review({
             const p = proposals.find((x) => x.key === detail.key);
             if (p) void loadMembers(p);
             void reload();
-            refreshOrganize();
-            refreshSuggestions();
+            onChanged();
           }}
           onNotify={onNotify}
           onPrev={
