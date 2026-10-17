@@ -372,6 +372,12 @@ mod tests {
         assert!(!src.join("r.png").exists());
 
         let res = restore_screenshots(&db, &[id, 4242]).unwrap();
+        #[cfg(target_os = "windows")]
+        if res.restored != 1 {
+            // CI fixtures only: expose the shell's reported paths so display
+            // names and filesystem identities can be distinguished on Windows.
+            eprintln!("Recycle Bin after failed fixture restore: {:?}", trash::os_limited::list());
+        }
         assert_eq!(res.restored, 1, "restore failures: {:?}", res.failed);
         assert_eq!(res.failed.len(), 1, "unknown id reported");
         assert!(src.join("r.png").exists(), "file back in place");

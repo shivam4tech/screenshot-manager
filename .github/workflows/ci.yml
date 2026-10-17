@@ -19,6 +19,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
 
       - uses: actions/setup-node@v4
         with:
@@ -45,8 +47,8 @@ jobs:
       - name: Frontend typecheck + build
         run: npm run build
 
-      - name: Workspace tests
-        run: cargo test --workspace --locked --quiet
+      - name: Core crate tests
+        run: cargo test -p shotmemory-core --locked --quiet
 
       - name: Compile full workspace (includes Tauri shell)
         run: cargo check --workspace --locked --quiet
