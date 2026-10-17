@@ -45,6 +45,9 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
+      - name: Verify before packaging
+        run: npm run verify
+
       - name: Build installers and publish to Release
         uses: tauri-apps/tauri-action@v0
         env:
@@ -55,11 +58,12 @@ jobs:
           releaseDraft: false
           prerelease: false
           releaseBody: |
-            Local-first, offline screenshot memory. Your files are never moved, renamed, or uploaded.
+            Local-first, offline screenshot memory. Scanning is read-only; rename and trash require explicit user actions. Screenshots are never uploaded.
 
             Pick your installer below: `.deb` / `.AppImage` (Linux), NSIS setup (Windows), `.dmg` (macOS).
 
             Notes:
             - Text extraction needs Tesseract on PATH (`tesseract-ocr` via apt, `brew install tesseract`, or the UB Mannheim installer on Windows). The app runs fine without it.
             - Linux tray icon needs `libayatana-appindicator3` at runtime (usually preinstalled on Ubuntu).
+            - In-app Trash undo is available on Linux and Windows. On macOS, use Put Back in Finder’s Trash, then scan again.
             - These builds are unsigned: on macOS right-click → Open on first launch; Windows may show a SmartScreen prompt.

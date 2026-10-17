@@ -39,11 +39,14 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
+      - name: Frontend regression tests
+        run: npm test
+
       - name: Frontend typecheck + build
         run: npm run build
 
-      - name: Core crate tests
-        run: cargo test -p shotmemory-core --quiet
+      - name: Workspace tests
+        run: cargo test --workspace --locked --quiet
 
       - name: Compile full workspace (includes Tauri shell)
-        run: cargo check --workspace --quiet
+        run: cargo check --workspace --locked --quiet

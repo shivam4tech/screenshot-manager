@@ -44,6 +44,6 @@
     ],
     "category": "Utility",
     "shortDescription": "Searchable visual memory for your screenshots",
-    "longDescription": "Screenshot Memory turns your existing screenshot collection into a searchable personal visual memory. Local-first and offline: full-text search over filenames and OCR text, tags, collections, timeline, and duplicate review — without moving, renaming, or modifying a single file."
+    "longDescription": "Screenshot Memory turns your existing screenshot collection into a searchable personal visual memory. Local-first and offline: full-text search over filenames and OCR text, tags, collections, timeline, and duplicate review — with read-only indexing and optional reviewed rename and trash workflows."
   }
 }

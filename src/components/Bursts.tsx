@@ -1,3 +1,4 @@
+import { trashUndoAction } from "../api";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
@@ -206,10 +207,10 @@ export default function Bursts({
     if (removedIds.length > 0) {
       setItems((rows) => rows.filter((r) => !removedIds.includes(r.id)));
       sel.remove(removedIds);
-      toast(`${removedIds.length} screenshot${removedIds.length === 1 ? "" : "s"} moved to trash`, {
+      toast(`${removedIds.length} screenshot${removedIds.length === 1 ? "" : "s"} moved to trash`, trashUndoAction({
         label: "Undo",
         fn: () => void undoTrash(removedIds),
-      });
+      }));
     } else {
       sel.clear();
     }

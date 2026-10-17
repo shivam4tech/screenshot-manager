@@ -1,3 +1,4 @@
+import { trashUndoAction } from "../api";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
@@ -175,10 +176,11 @@ export default function Detail({
     setSaving(true);
     api
       .deleteScreenshots([id])
-      .then(() => {
+      .then((summary) => {
+        if (summary.failed.length) throw new Error(summary.failed[0].message);
         onChanged();
         onClose();
-        onNotify?.("Screenshot moved to trash.", {
+        onNotify?.("Screenshot moved to trash.", trashUndoAction({
           label: "Undo",
           fn: () => {
             void api
@@ -186,7 +188,7 @@ export default function Detail({
               .then(() => onChanged())
               .catch((e) => setError(String(e)));
           },
-        });
+        }));
       })
       .catch((e) => {
         setError(String(e));

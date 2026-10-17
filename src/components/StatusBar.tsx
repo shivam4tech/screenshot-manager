@@ -45,9 +45,8 @@ export default function StatusBar({
   useEffect(() => {
     let alive = true;
     const unsubs: Array<() => void> = [];
-    onOcrProgress((p) => alive && setOcr(p.done ? null : p)).then((u) =>
-      unsubs.push(u)
-    );
+    const subscribe = (u: () => void) => { if (alive) unsubs.push(u); else u(); };
+    onOcrProgress((p) => alive && setOcr(p.done ? null : p)).then(subscribe);
     onOcrComplete((s) => {
       if (!alive) return;
       setOcr(null);
@@ -59,7 +58,7 @@ export default function StatusBar({
             : null
       );
       api.getStats().then((st) => alive && setStats(st)).catch(() => {});
-    }).then((u) => unsubs.push(u));
+    }).then(subscribe);
     return () => {
       alive = false;
       unsubs.forEach((u) => u());
@@ -120,9 +119,8 @@ export default function StatusBar({
               Start
             </button>
           </>
-        ) : (
-          ocrNote && <span className="muted" role="status">{ocrNote}</span>
-        )}
+        ) : null}
+        {ocrNote && !ocr && <span className="muted" role="status">{ocrNote}</span>}
       </span>
     </footer>
   );

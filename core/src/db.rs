@@ -1269,7 +1269,7 @@ impl Database {
              LEFT JOIN screenshots s ON s.id = ci.screenshot_id
              GROUP BY c.id
              ORDER BY c.created_at DESC, c.id DESC",
-        )?;;
+        )?;
         let rows = stmt
             .query_map([], |r| {
                 Ok(CollectionInfo {
@@ -1872,7 +1872,7 @@ mod tests {
         let d2 = db
             .add_directory(Path::new("/tmp/Pictures with spaces"))
             .unwrap();
-        assert_eq!(d1.path, "/tmp/Screenshots");
+        assert_eq!(d1.path, normalize_path(Path::new("/tmp/Screenshots")));
         let d1b = db.add_directory(Path::new("/tmp/Screenshots")).unwrap();
         assert_eq!(d1.id, d1b.id, "add_directory is idempotent");
         assert_eq!(db.list_directories().unwrap().len(), 2);
@@ -2038,10 +2038,10 @@ mod tests {
     #[test]
     fn normalize_paths() {
         assert_eq!(
-            normalize_path(Path::new("/tmp/a/../b/./c.png")),
-            "/tmp/b/c.png"
+            normalize_path(&std::env::temp_dir().join("a/../b/./c.png")),
+            std::env::temp_dir().join("b/c.png").to_string_lossy()
         );
-        assert!(normalize_path(Path::new("relative.png")).starts_with('/'));
+        assert!(Path::new(&normalize_path(Path::new("relative.png"))).is_absolute());
     }
 
     #[test]

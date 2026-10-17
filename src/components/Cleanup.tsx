@@ -1,3 +1,4 @@
+import { trashUndoAction } from "../api";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
@@ -352,10 +353,10 @@ export default function Cleanup({
     onChanged();
     loadMemories(memQuery).catch(() => {});
     if (removedIds.length > 0) {
-      onNotify(`${removedIds.length} screenshot${removedIds.length === 1 ? "" : "s"} moved to Trash.`, {
+      onNotify(`${removedIds.length} screenshot${removedIds.length === 1 ? "" : "s"} moved to Trash.`, trashUndoAction({
         label: "Undo",
         fn: () => void undoTrash(removedIds),
-      });
+      }));
     }
   };
 

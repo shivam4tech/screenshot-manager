@@ -1,3 +1,4 @@
+import { trashUndoAction } from "../api";
 import { useCallback, useEffect, useState } from "react";
 import {
   api,
@@ -141,7 +142,7 @@ export default function Duplicates({
       if (gone.length > 0) {
         onNotify?.(
           `${gone.length} duplicate ${gone.length === 1 ? "copy" : "copies"} moved to Trash.`,
-          {
+          trashUndoAction({
             label: "Undo",
             fn: () => {
               void api
@@ -152,7 +153,7 @@ export default function Duplicates({
                 })
                 .catch((e) => setError(String(e)));
             },
-          }
+          })
         );
       }
     } catch (e) {

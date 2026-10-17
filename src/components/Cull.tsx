@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { api, thumbnailUrl } from "../api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { api, canRestoreTrash, thumbnailUrl } from "../api";
 
 export interface CullItem {
   id: number;
@@ -27,6 +27,8 @@ export default function Cull({
   const [imgUrl, setImgUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const operation = useRef(false);
+  const restoreSupported = canRestoreTrash();
   const [finished, setFinished] = useState(items.length === 0);
 
   const trashedSet = new Set(trashed);
@@ -60,7 +62,8 @@ export default function Cull({
 
   const trashCurrent = useCallback(async () => {
     const cur = items[index];
-    if (!cur || busy) return;
+    if (!cur || operation.current || finished) return;
+    operation.current = true;
     setBusy(true);
     setError(null);
     try {
@@ -77,13 +80,15 @@ export default function Cull({
     } catch (e) {
       setError(String(e));
     } finally {
+      operation.current = false;
       setBusy(false);
     }
-  }, [items, index, busy, step]);
+  }, [items, index, finished, step]);
 
   const undoLast = useCallback(async () => {
     const last = undoStack[undoStack.length - 1];
-    if (last === undefined || busy) return;
+    if (last === undefined || operation.current || !restoreSupported) return;
+    operation.current = true;
     setBusy(true);
     setError(null);
     try {
@@ -100,17 +105,20 @@ export default function Cull({
     } catch (e) {
       setError(String(e));
     } finally {
+      operation.current = false;
       setBusy(false);
     }
-  }, [undoStack, busy, items]);
+  }, [undoStack, items, restoreSupported]);
 
   const goNext = useCallback(() => {
+    if (operation.current) return;
     // Stop at the last remaining shot — never advance past it.
     const next = step(index, 1);
     if (next !== null) setIndex(next);
   }, [index, step]);
 
   const goPrev = useCallback(() => {
+    if (operation.current) return;
     const prev = step(index, -1);
     if (prev !== null) {
       setFinished(false);
@@ -120,6 +128,7 @@ export default function Cull({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (operation.current) { e.preventDefault(); return; }
       if (e.key === "Escape") {
         onDone(trashed);
         return;
@@ -173,7 +182,7 @@ export default function Cull({
           <span className="cull-sep"> · </span>
           {trashed.length} trashed
         </span>
-        <button className="cull-done" onClick={() => onDone(trashed)} aria-label="Finish culling">
+        <button className="cull-done" disabled={busy} onClick={() => onDone(trashed)} aria-label="Finish culling">
           Done ✓
         </button>
       </div>
@@ -186,7 +195,7 @@ export default function Cull({
             <h2>Reviewed them all.</h2>
             <p>
               {trashed.length} trashed
-              {undoStack.length > 0 && " — press u to undo the last one"}. Press
+              {restoreSupported && undoStack.length > 0 && " — press u to undo the last one"}. Press
               Done or Esc to return.
             </p>
           </div>
@@ -213,26 +222,26 @@ export default function Cull({
             onClick={() => void trashCurrent()}
             disabled={busy}
             className="danger"
-            title="Trash this file — recoverable, u undoes (x)"
+            title={restoreSupported ? "Trash this file — u undoes (x)" : "Trash this file — restore using Finder (x)"}
           >
             {busy ? "…" : "Trash"}
           </button>
           <button className="cull-keep" onClick={goNext} disabled={busy || !canNext} title="Next (→)">
             Keep <span aria-hidden="true">→</span>
           </button>
-          <button
+          {restoreSupported && <button
             className="cull-undo"
             onClick={() => void undoLast()}
             disabled={busy || undoStack.length === 0}
             title="Restore last trashed file (u)"
           >
             Undo
-          </button>
+          </button>}
         </div>
       )}
 
       <p className="cull-hints muted small">
-        <kbd>←</kbd> <kbd>space</kbd> keep · <kbd>X</kbd> trash · <kbd>U</kbd> undo · <kbd>Esc</kbd> done
+        <kbd>→</kbd> <kbd>space</kbd> keep · <kbd>X</kbd> trash · {restoreSupported ? <><kbd>U</kbd> undo · </> : <>Restore from Finder’s Trash · </>}<kbd>Esc</kbd> done
       </p>
     </div>
   );

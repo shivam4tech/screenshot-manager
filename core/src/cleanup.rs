@@ -199,32 +199,7 @@ pub fn restore_screenshots(db: &Database, ids: &[i64]) -> CoreResult<RestoreSumm
             summary.already_there += 1;
             continue;
         }
-        let trash_items = match trash::os_limited::list() {
-            Ok(items) => items,
-            Err(e) => {
-                summary.failed.push(RestoreFailure {
-                    id: *id,
-                    path: Some(path),
-                    message: format!("could not read trash: {e}"),
-                });
-                continue;
-            }
-        };
-        // Newest deletion of this exact path wins (avoids twin restores).
-        let mut matches: Vec<_> = trash_items
-            .into_iter()
-            .filter(|t| t.original_path() == std::path::Path::new(&path))
-            .collect();
-        matches.sort_by_key(|t| std::cmp::Reverse(t.time_deleted));
-        let Some(item) = matches.into_iter().next() else {
-            summary.failed.push(RestoreFailure {
-                id: *id,
-                path: Some(path),
-                message: "no longer in trash (emptied?)".into(),
-            });
-            continue;
-        };
-        match trash::os_limited::restore_all(vec![item]) {
+        match restore_file_from_trash(&path) {
             Ok(()) if std::path::Path::new(&path).exists() => {
                 db.mark_available(&[*id])?;
                 summary.restored += 1;
@@ -242,6 +217,45 @@ pub fn restore_screenshots(db: &Database, ids: &[i64]) -> CoreResult<RestoreSumm
         }
     }
     Ok(summary)
+}
+
+/// The trash crate exposes restore only on Linux/Windows.
+pub const TRASH_RESTORE_SUPPORTED: bool = cfg!(any(target_os = "linux", target_os = "windows"));
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn restore_file_from_trash(path: &str) -> Result<(), String> {
+    let items = trash::os_limited::list().map_err(|e| format!("could not read trash: {e}"))?;
+    let mut matches: Vec<_> = items.into_iter().filter(|item| {
+        same_restore_path(&item.original_path(), std::path::Path::new(path))
+    }).collect();
+    matches.sort_by_key(|item| std::cmp::Reverse(item.time_deleted));
+    let item = matches.into_iter().next().ok_or("no longer in trash (emptied?)")?;
+    trash::os_limited::restore_all(vec![item]).map_err(|e| e.to_string())
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn same_restore_path(a: &std::path::Path, b: &std::path::Path) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        // tempfile/canonicalize can use verbatim paths; the Recycle Bin
+        // returns ordinary drive paths, with potentially different casing.
+        let normalize = |path: &std::path::Path| {
+            let path = path.to_string_lossy().replace('/', "\\");
+            let path = path.strip_prefix("\\\\?\\").unwrap_or(&path);
+            let path = if let Some(unc) = path.strip_prefix("UNC\\") {
+                format!("\\\\{unc}")
+            } else { path.to_owned() };
+            path.to_lowercase()
+        };
+        normalize(a) == normalize(b)
+    }
+    #[cfg(not(target_os = "windows"))]
+    { a == b }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+fn restore_file_from_trash(_path: &str) -> Result<(), String> {
+    Err("Restore the file using Put Back in Finder's Trash, then scan again.".into())
 }
 
 #[cfg(test)]
@@ -292,6 +306,32 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "windows")]
+    fn restore_matches_verbatim_and_case_variants() {
+        use std::path::Path;
+        assert!(same_restore_path(Path::new(r"\\?\C:\Users\Test\a.png"), Path::new(r"c:\users\test\a.png")));
+        assert!(same_restore_path(Path::new(r"\\?\UNC\server\share\a.png"), Path::new(r"\\server\share\a.png")));
+        assert!(!same_restore_path(Path::new(r"C:\shots\a.png"), Path::new(r"C:\shots\b.png")));
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn unsupported_restore_explains_manual_recovery() {
+        let db = Database::open_in_memory().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let id = db.insert_screenshot(&NewScreenshot {
+            path: dir.path().join("gone.png").to_string_lossy().into_owned(),
+            filename: "gone.png".into(),
+            ..Default::default()
+        }).unwrap();
+        db.mark_missing(&[id]).unwrap();
+        let summary = restore_screenshots(&db, &[id]).unwrap();
+        assert_eq!(summary.restored, 0);
+        assert!(summary.failed[0].message.contains("Finder"));
+        assert_eq!(db.library_stats().unwrap().missing, 1);
+    }
+
+    #[test]
     fn delete_missing_file_marks_record() {
         let db = Database::open_in_memory().unwrap();
         let id = db
@@ -307,6 +347,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     fn delete_then_restore_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("shots");
@@ -327,7 +368,7 @@ mod tests {
         assert!(!src.join("r.png").exists());
 
         let res = restore_screenshots(&db, &[id, 4242]).unwrap();
-        assert_eq!(res.restored, 1);
+        assert_eq!(res.restored, 1, "restore failures: {:?}", res.failed);
         assert_eq!(res.failed.len(), 1, "unknown id reported");
         assert!(src.join("r.png").exists(), "file back in place");
         let d = db.get_screenshot_detail(id).unwrap().unwrap();

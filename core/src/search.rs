@@ -603,8 +603,11 @@ impl<'a> Searcher<'a> {
                     ));
                 }
                 Filter::Dir(v) => {
-                    where_args.push(format!("{v}/%").into());
-                    where_clauses.push(format!("s.path LIKE ?{}", where_args.len()));
+                    let prefix = v.trim_end_matches(std::path::MAIN_SEPARATOR);
+                    // Escape SQL wildcards in literal folder names.
+                    let escaped = prefix.replace('!', "!!").replace('%', "!%").replace('_', "!_");
+                    where_args.push(format!("{escaped}{}%", std::path::MAIN_SEPARATOR).into());
+                    where_clauses.push(format!("s.path LIKE ?{} ESCAPE '!'", where_args.len()));
                 }
                 Filter::Format(v) => {
                     where_args.push(v.to_ascii_lowercase().into());
@@ -709,7 +712,7 @@ mod tests {
             .and_then(|e| e.to_str())
             .map(|e| e.to_ascii_lowercase());
         db.insert_screenshot(&NewScreenshot {
-            path: path.into(),
+            path: crate::db::normalize_path(std::path::Path::new(path)),
             filename: filename.into(),
             created_ts: Some(NOW - created_days_ago * 86_400),
             modified_ts: Some(NOW - created_days_ago * 86_400),
@@ -857,6 +860,24 @@ mod tests {
         let out = Searcher::new(&db).search("docker error", 10, 0).unwrap();
         assert_eq!(out.total, 2);
         assert_eq!(out.rows[0].row.id, newer, "equal relevance → newer first");
+    }
+
+    #[test]
+    fn directory_filters_use_literal_paths_and_respect_boundaries() {
+        let db = Database::open_in_memory().unwrap();
+        let root = std::env::temp_dir();
+        let folder = root.join("shots_100%!");
+        for (dir, name) in [(&folder, "inside.png"), (&root.join("shotsX100other"), "other.png"),
+            (&root.join("shots_100%!suffix"), "sibling.png")] {
+            insert(&db, &dir.join(name).to_string_lossy(), name, 1);
+        }
+        let searcher = Searcher::new(&db);
+        for suffix in ["", std::path::MAIN_SEPARATOR_STR] {
+            let query = format!("dir:\"{}{suffix}\"", folder.to_string_lossy());
+            let out = searcher.search(&query, 10, 0).unwrap();
+            assert_eq!(out.total, 1, "{query}");
+            assert_eq!(out.rows[0].row.filename, "inside.png");
+        }
     }
 
     #[test]

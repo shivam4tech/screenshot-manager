@@ -1,3 +1,4 @@
+import { trashUndoAction } from "../api";
 import { useCallback, useEffect, useState } from "react";
 import {
   api,
@@ -187,16 +188,17 @@ export default function Review({
       if (trashed.length > 0) {
         onNotify(
           `${trashed.length} screenshot${trashed.length === 1 ? "" : "s"} moved to trash`,
-          {
+          trashUndoAction({
             label: "Undo",
             fn: () => {
               void (async () => {
-                await api.restoreScreenshots(trashed);
+                const result = await api.restoreScreenshots(trashed);
+                if (result.failed.length) setError(result.failed[0].message);
                 await reload();
                 onChanged();
-              })();
+              })().catch((e) => setError(String(e)));
             },
-          }
+          })
         );
       }
       if (s.failed.length > 0) setError(s.failed[0].message);
@@ -217,18 +219,19 @@ export default function Review({
       });
       onNotify(
         `${trashedIds.length} screenshot${trashedIds.length === 1 ? "" : "s"} moved to trash`,
-        {
+        trashUndoAction({
           label: "Undo",
             fn: () => {
               void (async () => {
-                await api.restoreScreenshots(trashedIds);
+                const result = await api.restoreScreenshots(trashedIds);
+                if (result.failed.length) setError(result.failed[0].message);
                 const p = proposals.find((x) => x.key === key);
                 if (p) await loadMembers(p);
                 await reload();
                 onChanged();
-              })();
+              })().catch((e) => setError(String(e)));
             },
-          }
+          })
         );
       }
     onChanged();

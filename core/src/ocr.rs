@@ -198,6 +198,7 @@ impl OcrPipeline {
 
         let workers = self.config.workers.max(1);
         std::thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(workers);
             for _ in 0..workers {
                 let db_path = self.db_path.clone();
                 let engine = self.engine.clone();
@@ -205,7 +206,7 @@ impl OcrPipeline {
                 let progress = progress.clone();
                 let attempted = attempted.clone();
                 let cancel = cancel;
-                scope.spawn(move || {
+                handles.push(scope.spawn(move || {
                     let Ok(db) = Database::open(&db_path) else {
                         return;
                     };
@@ -242,17 +243,17 @@ impl OcrPipeline {
                             std::thread::sleep(Duration::from_millis(config.delay_ms));
                         }
                     }
-                });
+                }));
             }
 
             // Progress reporting from the coordinator until the queue drains.
             loop {
                 std::thread::sleep(Duration::from_millis(100));
-                {
-                    let p = progress.lock().unwrap_or_else(|e| e.into_inner());
-                    if p.processed >= p.total || cancel.load(Ordering::Relaxed) {
-                        break;
-                    }
+                // The queue can shrink while running (trash, another worker,
+                // or an external change). A stale initial count must not keep
+                // the coordinator alive after every worker has exited.
+                if handles.iter().all(|handle| handle.is_finished()) {
+                    break;
                 }
                 on_progress(progress.lock().unwrap_or_else(|e| e.into_inner()).clone());
             }
@@ -541,6 +542,44 @@ mod tests {
             )
             .unwrap();
         assert_eq!(stuck, 0);
+    }
+
+    #[test]
+    fn pipeline_finishes_when_queued_files_become_missing_during_run() {
+        struct RemovingEngine { db_path: PathBuf, remove_id: i64 }
+        impl OcrEngine for RemovingEngine {
+            fn recognize(&self, _: &Path) -> CoreResult<OcrOutput> {
+                Database::open(&self.db_path)?.mark_missing(&[self.remove_id])?;
+                Ok(OcrOutput { text: "first screenshot".into(), confidence: None })
+            }
+            fn version(&self) -> String { "test".into() }
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let (db_path, db) = setup(tmp.path());
+        let first = tmp.path().join("first.png");
+        let second = tmp.path().join("second.png");
+        std::fs::write(&first, b"x").unwrap();
+        std::fs::write(&second, b"x").unwrap();
+        add_pending(&db, &first.to_string_lossy());
+        let remove_id = add_pending(&db, &second.to_string_lossy());
+        let pipeline = OcrPipeline::new(
+            &db_path, Arc::new(RemovingEngine { db_path: db_path.clone(), remove_id }),
+            OcrConfig::default(),
+        );
+        let cancel = Arc::new(AtomicBool::new(false));
+        let worker_cancel = cancel.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let _ = tx.send(pipeline.run(&worker_cancel, |_| {}));
+        });
+        let result = rx.recv_timeout(Duration::from_secs(5));
+        // Ensure an old implementation can fail without leaking a worker.
+        cancel.store(true, Ordering::SeqCst);
+        worker.join().unwrap();
+        let summary = result.expect("OCR coordinator waited on a stale queue count").unwrap();
+        assert_eq!(summary.processed, 1);
+        assert_eq!(summary.succeeded, 1);
+        assert!(!summary.cancelled);
     }
 
     #[test]

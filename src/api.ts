@@ -8,6 +8,7 @@ export interface AppStateDto {
   total_screenshots: number;
   problem_count: number;
   indexing: boolean;
+  trash_restore_supported: boolean;
 }
 
 export interface DirectoryDto {
@@ -368,8 +369,17 @@ export interface ClassifySummary {
   updated: number;
 }
 
+let restoreSupported = false;
+export const canRestoreTrash = () => restoreSupported;
+export const trashUndoAction = <T,>(action: T): T | undefined =>
+  restoreSupported ? action : undefined;
+
 export const api = {
-  getAppState: () => invoke<AppStateDto>("get_app_state"),
+  getAppState: async () => {
+    const state = await invoke<AppStateDto>("get_app_state");
+    restoreSupported = state.trash_restore_supported;
+    return state;
+  },
   getDefaultDirectories: () => invoke<string[]>("get_default_directories"),
   listDirectories: () => invoke<DirectoryDto[]>("list_directories"),
   addDirectory: (path: string) => invoke<DirectoryDto>("add_directory", { path }),
@@ -515,4 +525,8 @@ export function onOcrProgress(cb: (p: OcrProgress) => void): Promise<UnlistenFn>
 
 export function onOcrComplete(cb: (s: OcrSummary) => void): Promise<UnlistenFn> {
   return listen<OcrSummary>("ocr://complete", (e) => cb(e.payload));
+}
+
+export function onLibraryChanged(cb: () => void): Promise<UnlistenFn> {
+  return listen("library://changed", cb);
 }

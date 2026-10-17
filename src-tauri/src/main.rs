@@ -14,11 +14,11 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 use shotmemory_core::db::Database;
 use shotmemory_core::platform::PlatformPaths;
-use shotmemory_core::watcher::WatchService;
+use shotmemory_core::watcher::{WatchService, WatchUpdate};
 
 /// Shared application state managed by Tauri.
 pub struct AppState {
@@ -63,7 +63,15 @@ fn main() {
             // Start live directory monitoring so new screenshots index
             // themselves without any user action.
             let state = app.state::<AppState>();
-            let service = WatchService::spawn(state.db_path.clone(), state.thumb_cache.clone());
+            let handle = app.handle().clone();
+            let service = WatchService::spawn_with_callback(
+                state.db_path.clone(), state.thumb_cache.clone(), move |update| {
+                    if update == WatchUpdate::Changed {
+                        let _ = handle.emit("library://changed", ());
+                    }
+                    commands::spawn_ocr_if_enabled(handle.clone());
+                },
+            );
             *state.watcher.lock().map_err(|e| e.to_string())? = Some(service);
 
             // Resume any OCR work left over from a previous session.

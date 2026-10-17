@@ -4,9 +4,13 @@
 
 A local-first, cross-platform (Windows / Linux / macOS) desktop application that
 turns your existing screenshot collection into a searchable personal visual
-memory — without moving, renaming, or modifying a single file.
+memory. Indexing is read-only; optional rename and trash workflows require
+explicit user actions. Screenshots and extracted text stay on your machine.
 
-## Status — 1.0 ready
+## Status — 1.0 development cycle complete
+
+See [development status](docs/DEVELOPMENT_STATUS.md) for the sprint audit,
+verification commands, and platform limitations.
 
 Working today:
 
@@ -47,8 +51,8 @@ Working today:
   (local time), with counts at every level.
 - **Duplicate review** (Sprint 4): byte-identical groups (shared content hash)
   plus perceptual clusters (dHash Hamming distance, adjustable threshold) for
-  review and bulk organization — star all, tag all, collect all. Files are
-  never touched; deletion stays a deliberate act outside the app.
+  review and bulk organization — star all, tag all, collect all. Reviewed
+  cleanup can move selected copies to the OS Trash.
 - **Auto-enrichment** (Sprint 5): heuristic app / website / category guesses
   from filenames, paths, and OCR text — applied automatically after scans and
   OCR passes, re-runnable from Settings, never overwriting manual values.
@@ -73,8 +77,15 @@ Working today:
   for the session.
 - **Cull mode**: full-screen keyboard triage for any grid, collection, or
   burst — →/space keeps, x trashes the actual file (OS trash, recoverable),
-  u undoes by restoring from the trash, Esc finishes. No per-item confirms
-  to slow you down; the session undo has your back.
+  u restores from Trash on Linux/Windows, Esc finishes. On macOS, restore
+  with Put Back in Finder’s Trash and scan again. No per-item confirmations;
+  keyboard navigation and exit are locked while a trash/restore operation runs.
+- **Review suggestions**: local collection/tag suggestions, suggested groups,
+  one-click approval, in-group navigation, and title-based rename.
+- **Cleanup dashboard**: disk-usage analysis, reviewed trash, and optional
+  searchable metadata records for deleted screenshots.
+- **Bulk rename**: preview collisions before applying; journaled operations
+  preserve screenshot identity, tags, notes, and collection memberships.
 
 ## Installing
 
@@ -110,8 +121,9 @@ Working today:
 
 **Safety invariants**
 
-- The scanner only *reads* user files. All file mutation (future
-  organize/export features) lives in a separate, explicitly-confirmed module.
+- The scanner only *reads* user files. Rename and trash live in separate
+  modules and require explicit user actions. Cull mode treats its Trash
+  button/shortcut as that action.
 - Batched transactions + WAL mean a crash during scanning never corrupts the
   index; partial progress is preserved.
 - Logs contain operational events only — never screenshot contents or OCR text.
@@ -126,6 +138,9 @@ disabled.
 
 ```bash
 npm install
+
+# Complete local verification (frontend tests/build + workspace tests)
+npm run verify
 
 # Run core tests (no GUI deps required)
 cargo test -p shotmemory-core

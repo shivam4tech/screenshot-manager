@@ -78,6 +78,7 @@ pub fn default_screenshot_dirs() -> Vec<PathBuf> {
     let pictures = dirs::picture_dir();
     let desktop = dirs::desktop_dir();
     let downloads = dirs::download_dir();
+    #[cfg(not(target_os = "windows"))]
     let home = dirs::home_dir();
 
     let push = |candidates: &mut Vec<PathBuf>, p: Option<PathBuf>| {

@@ -37,6 +37,13 @@ enum Kind {
     Removed,
 }
 
+/// Notifications delivered on the watcher thread, after database writes finish.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WatchUpdate {
+    Ready,
+    Changed,
+}
+
 /// Handle to the background watcher thread.
 pub struct WatchService {
     stop: Arc<AtomicBool>,
@@ -48,12 +55,20 @@ impl WatchService {
     /// Spawn the watcher thread. It opens its own DB connection and monitors
     /// every enabled directory currently registered.
     pub fn spawn(db_path: PathBuf, thumbnail_cache: PathBuf) -> Self {
+        Self::spawn_with_callback(db_path, thumbnail_cache, |_| {})
+    }
+
+    pub fn spawn_with_callback(
+        db_path: PathBuf,
+        thumbnail_cache: PathBuf,
+        on_update: impl Fn(WatchUpdate) + Send + 'static,
+    ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let reconfigure = Arc::new(AtomicBool::new(false));
         let stop2 = stop.clone();
         let reconfigure2 = reconfigure.clone();
         let handle = std::thread::spawn(move || {
-            run_loop(db_path, thumbnail_cache, &stop2, &reconfigure2);
+            run_loop(db_path, thumbnail_cache, &stop2, &reconfigure2, on_update);
         });
         Self {
             stop,
@@ -83,11 +98,20 @@ impl Drop for WatchService {
     }
 }
 
-fn run_loop(db_path: PathBuf, thumb_cache: PathBuf, stop: &AtomicBool, reconfigure: &AtomicBool) {
+fn run_loop(
+    db_path: PathBuf,
+    thumb_cache: PathBuf,
+    stop: &AtomicBool,
+    reconfigure: &AtomicBool,
+    on_update: impl Fn(WatchUpdate),
+) {
     loop {
         if stop.load(Ordering::Relaxed) {
             return;
         }
+        // Consume the request before reading directories so requests arriving
+        // during setup are preserved for the next iteration.
+        reconfigure.store(false, Ordering::SeqCst);
 
         let Ok(db) = Database::open(&db_path) else {
             std::thread::sleep(Duration::from_secs(2));
@@ -117,8 +141,8 @@ fn run_loop(db_path: PathBuf, thumb_cache: PathBuf, stop: &AtomicBool, reconfigu
                 log::warn!("cannot watch {}: {e}", dir.display());
             }
         }
-        reconfigure.store(false, Ordering::SeqCst);
         log::info!("watching {} directories for changes", dirs.len());
+        on_update(WatchUpdate::Ready);
 
         let scanner = Scanner::new(&db, &thumb_cache);
         let mut pending: HashMap<PathBuf, Kind> = HashMap::new();
@@ -126,8 +150,11 @@ fn run_loop(db_path: PathBuf, thumb_cache: PathBuf, stop: &AtomicBool, reconfigu
 
         // Event loop for this watcher instance.
         loop {
-            if stop.load(Ordering::Relaxed) || reconfigure.load(Ordering::Relaxed) {
+            if stop.load(Ordering::Relaxed) {
                 return;
+            }
+            if reconfigure.load(Ordering::Relaxed) {
+                break;
             }
             match rx.recv_timeout(DEBOUNCE) {
                 Ok(event) => {
@@ -139,10 +166,16 @@ fn run_loop(db_path: PathBuf, thumb_cache: PathBuf, stop: &AtomicBool, reconfigu
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                     if dirty {
                         let mut batch: Vec<(PathBuf, Kind)> = pending.drain().collect();
-                        batch.sort();
+                        // A rename's old path must become missing before its
+                        // new path is indexed, regardless of filename order.
+                        batch.sort_by(|(a, ka), (b, kb)| kb.cmp(ka).then(a.cmp(b)));
                         dirty = false;
+                        let mut changed = false;
                         for (path, kind) in batch {
-                            handle_event(&db, &scanner, &path, kind);
+                            changed |= handle_event(&db, &scanner, &path, kind);
+                        }
+                        if changed {
+                            on_update(WatchUpdate::Changed);
                         }
                     }
                 }
@@ -190,39 +223,42 @@ fn record_event(kind: &EventKind, paths: &[PathBuf], pending: &mut HashMap<PathB
     }
 }
 
-fn handle_event(db: &Database, scanner: &Scanner, path: &Path, kind: Kind) {
+fn handle_event(db: &Database, scanner: &Scanner, path: &Path, kind: Kind) -> bool {
     let normalized = crate::db::normalize_path(path);
     // Our own in-flight renames are journaled: skip them so a managed
     // rename is never misread as delete + unrelated import.
     if db.is_rename_pending(&normalized).unwrap_or(false) {
-        return;
+        return false;
     }
     match kind {
         Kind::Removed => {
             if let Ok(n) = db.mark_missing_by_path(&normalized) {
                 if n > 0 {
                     log::info!("file removed, record marked missing: {normalized}");
+                    return true;
                 }
             }
         }
         Kind::Created | Kind::Modified => {
             if !path.is_file() || !crate::scanner::is_image_file(&path.to_string_lossy()) {
-                return;
+                return false;
             }
             if !wait_until_stable(path) {
                 log::warn!("file never stabilized; skipping for now: {}", path.display());
-                return;
+                return false;
             }
             match scanner.index_file(path) {
                 crate::scanner::FileOutcome::Indexed(id) => {
                     let _ = db.queue_ocr(id);
                     log::info!("indexed new/changed file (id {id})");
+                    return true;
                 }
                 crate::scanner::FileOutcome::Unchanged => {}
                 crate::scanner::FileOutcome::Failed => {}
             }
         }
     }
+    false
 }
 
 /// Wait until the file's (size, mtime) stop changing — screenshots are
@@ -316,7 +352,13 @@ mod tests {
         let db = Database::open(&db_path).unwrap();
         db.add_directory(&src).unwrap();
 
-        let _service = WatchService::spawn(db_path.clone(), tmp.path().join("thumbs"));
+        let (tx, rx) = std::sync::mpsc::channel();
+        let _service = WatchService::spawn_with_callback(
+            db_path.clone(), tmp.path().join("thumbs"), move |update| {
+                let _ = tx.send(update);
+            },
+        );
+        assert_eq!(rx.recv_timeout(Duration::from_secs(10)).unwrap(), WatchUpdate::Ready);
         let img = src.join("new shot.png");
         make_png(&img, 200, 120);
 
@@ -330,15 +372,20 @@ mod tests {
 
         // Rename → identity follows the content: old path missing, new path
         // available, and (because the content is identical) the same record.
-        let renamed = src.join("renamed shot.png");
+        let original_id = row.id;
+        db2.add_tag(original_id, "keep-on-rename").unwrap();
+        let renamed = src.join("a renamed shot.png");
         std::fs::rename(&img, &renamed).unwrap();
         assert!(wait_for(15, || {
             db2.list_screenshots(10, 0)
                 .unwrap()
                 .first()
                 .map(|r| r.filename.clone())
-                == Some("renamed shot.png".to_string())
+                == Some("a renamed shot.png".to_string())
         }));
+        let renamed_row = db2.list_screenshots(10, 0).unwrap().remove(0);
+        assert_eq!(renamed_row.id, original_id);
+        assert_eq!(db2.get_screenshot_detail(original_id).unwrap().unwrap().tags, vec!["keep-on-rename"]);
 
         // Delete → hidden from the grid; the record is kept as missing.
         std::fs::remove_file(&renamed).unwrap();
@@ -354,6 +401,42 @@ mod tests {
             .unwrap();
         assert_eq!(status, "missing");
         assert!(hash.is_some());
+    }
+
+    #[test]
+    fn service_reconfigures_added_and_removed_directories() {
+        let tmp = tempfile::tempdir().unwrap();
+        let first = tmp.path().join("first");
+        let second = tmp.path().join("second");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        let db_path = tmp.path().join("db.sqlite");
+        let db = Database::open(&db_path).unwrap();
+        let old = db.add_directory(&first).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let service = WatchService::spawn_with_callback(
+            db_path, tmp.path().join("thumbs"), move |update| {
+                let _ = tx.send(update);
+            },
+        );
+        assert_eq!(rx.recv_timeout(Duration::from_secs(10)).unwrap(), WatchUpdate::Ready);
+        db.add_directory(&second).unwrap();
+        service.reconfigure();
+        assert_eq!(rx.recv_timeout(Duration::from_secs(10)).unwrap(), WatchUpdate::Ready);
+        make_png(&second.join("added.png"), 20, 20);
+        assert_eq!(rx.recv_timeout(Duration::from_secs(15)).unwrap(), WatchUpdate::Changed);
+        assert_eq!(db.library_stats().unwrap().available, 1);
+        assert_eq!(db.ocr_claimable_count(3).unwrap(), 1);
+
+        db.remove_directory(old.id).unwrap();
+        service.reconfigure();
+        assert_eq!(rx.recv_timeout(Duration::from_secs(10)).unwrap(), WatchUpdate::Ready);
+        make_png(&first.join("ignored.png"), 30, 30);
+        make_png(&second.join("still-watched.png"), 40, 40);
+        assert_eq!(rx.recv_timeout(Duration::from_secs(15)).unwrap(), WatchUpdate::Changed);
+        let rows = db.list_screenshots(10, 0).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|row| row.filename != "ignored.png"));
     }
 
     #[test]

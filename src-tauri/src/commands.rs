@@ -36,6 +36,7 @@ pub struct AppStateDto {
     pub total_screenshots: i64,
     pub problem_count: i64,
     pub indexing: bool,
+    pub trash_restore_supported: bool,
 }
 
 #[derive(Serialize)]
@@ -67,6 +68,7 @@ pub fn get_app_state(state: State<AppState>) -> Result<AppStateDto, String> {
         total_screenshots: stats.total,
         problem_count: stats.problem_count,
         indexing: state.scan_running.load(Ordering::Relaxed),
+        trash_restore_supported: shotmemory_core::cleanup::TRASH_RESTORE_SUPPORTED,
     })
 }
 
@@ -380,9 +382,18 @@ pub fn get_setting(state: State<AppState>, key: String) -> Result<Option<String>
 }
 
 #[tauri::command]
-pub fn set_setting(state: State<AppState>, key: String, value: String) -> Result<(), String> {
+pub fn set_setting(app: AppHandle, state: State<AppState>, key: String, value: String) -> Result<(), String> {
     let db = state.db.lock().map_err(|e| e.to_string())?;
-    db.set_setting(&key, &value).map_err(|e| e.to_string())
+    db.set_setting(&key, &value).map_err(|e| e.to_string())?;
+    drop(db);
+    if key == "ocr_enabled" {
+        if value == "0" {
+            cancel_ocr(state)?;
+        } else {
+            spawn_ocr_if_enabled(app);
+        }
+    }
+    Ok(())
 }
 
 // ---- Organize: tags, flags, notes, collections --------------------------------
@@ -956,6 +967,7 @@ fn spawn_ocr_run(app: AppHandle) -> Result<(), String> {
         let result = pipeline.run(&cancel, move |p: OcrProgress| {
             let _ = app2.emit(OCR_PROGRESS_EVENT, &p);
         });
+        let restart = matches!(&result, Ok(summary) if !summary.cancelled && !summary.paused_battery);
         match result {
             Ok(summary) => {
                 log::info!(
@@ -965,11 +977,11 @@ fn spawn_ocr_run(app: AppHandle) -> Result<(), String> {
                     summary.skipped_missing,
                     summary.cancelled
                 );
-                let _ = app.emit(OCR_COMPLETE_EVENT, &summary);
                 // Fresh OCR text unlocks domain/category guesses.
                 if let Some(st) = app.try_state::<AppState>() {
                     enrich_quietly(&st.db_path);
                 }
+                let _ = app.emit(OCR_COMPLETE_EVENT, &summary);
             }
             Err(e) => {
                 log::error!("OCR pipeline failed: {e}");
@@ -984,6 +996,11 @@ fn spawn_ocr_run(app: AppHandle) -> Result<(), String> {
         }
         if let Some(st) = app.try_state::<AppState>() {
             st.ocr_running.store(false, Ordering::SeqCst);
+        }
+        // A watcher may have queued another file just as the last worker
+        // exited. Drain that work without requiring another file event.
+        if restart {
+            spawn_ocr_if_enabled(app);
         }
     });
     Ok(())

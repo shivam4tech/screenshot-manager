@@ -1,6 +1,10 @@
+import { trashUndoAction } from "../api";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
+  onLibraryChanged,
+  onScanComplete,
+  onOcrComplete,
   thumbnailUrl,
   type AppStateDto,
   type CollectionInfo,
@@ -140,6 +144,7 @@ export default function Library({
   } | null>(null);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [dataVersion, setDataVersion] = useState(0);
   const [detailId, setDetailId] = useState<number | null>(null);
   const [culling, setCulling] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
@@ -261,7 +266,7 @@ export default function Library({
     return () => {
       alive = false;
     };
-  }, [activeQuery, resolveThumbs]);
+  }, [activeQuery, resolveThumbs, dataVersion]);
 
   // Ctrl/Cmd+K focuses search.
   useEffect(() => {
@@ -354,6 +359,7 @@ export default function Library({
   };
 
   const refreshAfterChange = useCallback(() => {
+    setDataVersion((version) => version + 1);
     loadPage(0);
     refreshOrganize();
     refreshSuggestions();
@@ -361,6 +367,22 @@ export default function Library({
       loadCollectionItems(view.id, 0).catch(() => {});
     }
   }, [loadPage, refreshOrganize, refreshSuggestions, loadCollectionItems, view]);
+
+  useEffect(() => {
+    let alive = true;
+    const unsubs: Array<() => void> = [];
+    const refresh = () => { if (alive) refreshAfterChange(); };
+    for (const subscribe of [onLibraryChanged, onScanComplete, onOcrComplete]) {
+      subscribe(refresh).then((unlisten) => {
+        if (alive) unsubs.push(unlisten);
+        else unlisten();
+      }).catch((e) => { if (alive) setOrganizeError(String(e)); });
+    }
+    return () => {
+      alive = false;
+      unsubs.forEach((unlisten) => unlisten());
+    };
+  }, [refreshAfterChange]);
 
   /** Optimistic star toggle from the grid (no scroll loss). */
   const toggleStar = useCallback((id: number, next: boolean) => {
@@ -427,10 +449,10 @@ export default function Library({
         setSearchOutcome((o) =>
           o ? { total: o.total - removedIds.length, rows: o.rows.filter((row) => !gone.has(row.id)) } : o
         );
-        toast(`${removedIds.length} screenshot${removedIds.length === 1 ? "" : "s"} moved to trash`, {
+        toast(`${removedIds.length} screenshot${removedIds.length === 1 ? "" : "s"} moved to trash`, trashUndoAction({
           label: "Undo",
           fn: () => void undoTrash(removedIds),
-        });
+        }));
       }
       sel.clear();
       refreshOrganize();
