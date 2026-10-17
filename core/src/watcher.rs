@@ -165,16 +165,9 @@ fn run_loop(
                 }
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                     if dirty {
-                        let mut batch: Vec<(PathBuf, Kind)> = pending.drain().collect();
-                        // A rename's old path must become missing before its
-                        // new path is indexed, regardless of filename order.
-                        batch.sort_by(|(a, ka), (b, kb)| kb.cmp(ka).then(a.cmp(b)));
+                        let batch = pending.drain().collect();
                         dirty = false;
-                        let mut changed = false;
-                        for (path, kind) in batch {
-                            changed |= handle_event(&db, &scanner, &path, kind);
-                        }
-                        if changed {
+                        if process_batch(&db, &scanner, batch) {
                             on_update(WatchUpdate::Changed);
                         }
                     }
@@ -186,6 +179,27 @@ fn run_loop(
             }
         }
     }
+}
+
+fn process_batch(db: &Database, scanner: &Scanner, mut batch: Vec<(PathBuf, Kind)>) -> bool {
+    for (path, kind) in &mut batch {
+        // FSEvents reports both sides of a rename as Name(Any), rather than
+        // From/To. Inspect final existence after debouncing to identify the
+        // removed side. Do not treat a permission error as a missing file.
+        match path.try_exists() {
+            Ok(false) => *kind = Kind::Removed,
+            Ok(true) if *kind == Kind::Removed => *kind = Kind::Modified,
+            _ => {}
+        }
+    }
+    // A rename's old path must become missing before its new path is
+    // indexed, regardless of filename order or platform event encoding.
+    batch.sort_by(|(a, ka), (b, kb)| kb.cmp(ka).then(a.cmp(b)));
+    let mut changed = false;
+    for (path, kind) in batch {
+        changed |= handle_event(db, scanner, &path, kind);
+    }
+    changed
 }
 
 /// Translate a notify event into our simplified pending map.
@@ -401,6 +415,33 @@ mod tests {
             .unwrap();
         assert_eq!(status, "missing");
         assert!(hash.is_some());
+    }
+
+    #[test]
+    fn ambiguous_rename_events_keep_identity_and_tags() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open_in_memory().unwrap();
+        let scanner = Scanner::new(&db, tmp.path().join("thumbs"));
+        let old = tmp.path().join("z-old.png");
+        let new = tmp.path().join("a-new.png");
+        make_png(&old, 40, 40);
+        let crate::scanner::FileOutcome::Indexed(id) = scanner.index_file(&old) else {
+            panic!("fixture was not indexed");
+        };
+        db.add_tag(id, "keep").unwrap();
+        std::fs::rename(&old, &new).unwrap();
+        let mut pending = HashMap::new();
+        record_event(
+            &EventKind::Modify(notify::event::ModifyKind::Name(notify::event::RenameMode::Any)),
+            &[new, old], &mut pending,
+        );
+        assert!(process_batch(&db, &scanner, pending.into_iter().collect()));
+        let rows = db.list_screenshots(10, 0).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, id);
+        let detail = db.get_screenshot_detail(id).unwrap().unwrap();
+        assert_eq!(detail.filename, "a-new.png");
+        assert_eq!(detail.tags, vec!["keep"]);
     }
 
     #[test]

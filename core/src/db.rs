@@ -2039,7 +2039,7 @@ mod tests {
     fn normalize_paths() {
         assert_eq!(
             normalize_path(&std::env::temp_dir().join("a/../b/./c.png")),
-            std::env::temp_dir().join("b/c.png").to_string_lossy()
+            std::env::temp_dir().join("b").join("c.png").to_string_lossy()
         );
         assert!(Path::new(&normalize_path(Path::new("relative.png"))).is_absolute());
     }

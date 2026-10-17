@@ -237,9 +237,13 @@ fn restore_file_from_trash(path: &str) -> Result<(), String> {
 fn same_restore_path(a: &std::path::Path, b: &std::path::Path) -> bool {
     #[cfg(target_os = "windows")]
     {
-        // tempfile/canonicalize can use verbatim paths; the Recycle Bin
-        // returns ordinary drive paths, with potentially different casing.
+        // The Recycle Bin expands DOS short names (e.g. RUNNER~1). Resolve
+        // the still-existing parent because the trashed file is now absent.
+        // canonicalize also returns a verbatim prefix, unlike the shell.
         let normalize = |path: &std::path::Path| {
+            let resolved = path.parent().and_then(|parent| std::fs::canonicalize(parent).ok())
+                .and_then(|parent| path.file_name().map(|name| parent.join(name)));
+            let path = resolved.as_deref().unwrap_or(path);
             let path = path.to_string_lossy().replace('/', "\\");
             let path = path.strip_prefix("\\\\?\\").unwrap_or(&path);
             let path = if let Some(unc) = path.strip_prefix("UNC\\") {

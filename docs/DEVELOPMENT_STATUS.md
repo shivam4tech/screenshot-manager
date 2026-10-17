@@ -19,7 +19,8 @@ outdated documentation; this cycle addresses those items.
 
 - Rebuild the live watcher when folders change, preserving reconfiguration
   requests received during setup. Process old rename paths first so tags and
-  screenshot identity survive renames in either alphabetical direction.
+  screenshot identity survive renames in either alphabetical direction. Resolve
+  ambiguous macOS rename events using final file existence before ordering.
 - Start enabled OCR after watcher changes; notify the library and refresh active
   searches after file events, scan completion, and OCR completion. Recheck queued
   work when OCR exits, and apply the Settings OCR toggle immediately.
@@ -29,7 +30,8 @@ outdated documentation; this cycle addresses those items.
   directory searches. Make path test expectations platform independent.
 - Compile macOS without the Linux/Windows-only trash restore API. Hide unsupported
   undo actions and explain Finder recovery in cull mode. Normalize Windows
-  verbatim/case path variants when locating an item in the Recycle Bin.
+  DOS short names and verbatim/case path variants when locating an item in
+  the Recycle Bin.
 - Lock cull navigation, duplicate delete shortcuts, and exit while a file action
   is running. Keep failed deletions visible; report detail/review failures.
 - Show OCR-unavailable errors while pending jobs exist, and clean up event
@@ -44,7 +46,7 @@ outdated documentation; this cycle addresses those items.
 On Linux:
 
 - `npm run verify`: 7 frontend tests, production frontend build/typecheck,
-  98 core unit tests, and 1 integration smoke test passed.
+  99 core unit tests, and 1 integration smoke test passed.
 - `cargo check --workspace --locked --quiet`: passed.
 - `npm run tauri -- build --debug --bundles deb`: built the desktop executable
   and `target/debug/bundle/deb/Screenshot Memory_1.0.0_amd64.deb`.
